@@ -1,0 +1,227 @@
+"""CBML → enriched per-panel JSON (plan §13.4).
+
+Parses the project's CBML via ``cbml_parser`` and writes one JSON file per
+panel under ``<project>/enriched/``. The JSON is human-readable and the
+user is expected to review and edit it between ``enrich()`` and
+``build_prompts()`` (workflow §6).
+
+The split between :func:`enrich` (parses CBML) and
+:func:`_enrich_from_comic` (does the real work on an already-parsed Comic)
+keeps the core logic testable without ``cbml_parser`` installed.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import json
+from pathlib import Path
+from typing import Any
+
+from lazycomics.asset_registry import get_character, get_location
+from lazycomics.models import (
+    CaptionBox,
+    CharacterRef,
+    DialogueLine,
+    PanelGenerationRequest,
+    Project,
+    Sfx,
+)
+
+__all__ = ["enrich"]
+
+
+def enrich(project: Project) -> list[PanelGenerationRequest]:
+    """Parse the project's CBML and write one enriched JSON per panel.
+
+    Returns the list of :class:`PanelGenerationRequest` objects produced
+    (in reading order). Writes
+    ``<project>/enriched/page_<N>_panel_<M>.json`` per panel (1-based
+    indices for human readability).
+    """
+    from cbml_parser import CBMLParser  # lazy: it's a git dep, not always present at import time
+
+    parser = CBMLParser()
+    comic = parser.parse_file(str(project.cbml_path))
+    return _enrich_from_comic(project, comic)
+
+
+# ---------------------------------------------------------------------------
+# Core (testable without cbml_parser installed)
+# ---------------------------------------------------------------------------
+
+
+def _enrich_from_comic(project: Project, comic: Any) -> list[PanelGenerationRequest]:
+    """Build PanelGenerationRequests from an already-parsed Comic, write JSON."""
+    aspect_w, aspect_h = comic.aspect  # required in v1.1; parser already resolved presets
+    panels: list[PanelGenerationRequest] = []
+    for page in comic.pages:
+        max_col, max_row = _grid_dims(page)
+        for panel_idx, parser_panel in enumerate(page.panels):
+            panel = _build_panel(
+                project, page, parser_panel, panel_idx,
+                max_col, max_row, aspect_w, aspect_h,
+            )
+            panels.append(panel)
+            _write_panel(project, panel)
+    return panels
+
+
+def _grid_dims(page: Any) -> tuple[int, int]:
+    """``(max_col, max_row)`` for a page, derived from the slots themselves.
+
+    Works for both ``PresetLayout`` and ``CustomGrid`` without inspecting
+    the layout object — just takes the max endpoint across all panels.
+    """
+    max_col = max_row = 1
+    for p in page.panels:
+        max_col = max(max_col, p.slot.cols[1])
+        max_row = max(max_row, p.slot.rows[1])
+    return max_col, max_row
+
+
+def _build_panel(
+    project: Project,
+    page: Any,
+    parser_panel: Any,
+    panel_idx: int,
+    max_col: int,
+    max_row: int,
+    aspect_w: int,
+    aspect_h: int,
+) -> PanelGenerationRequest:
+    page_idx = page.index  # parser uses 0-based
+    panel_id = f"page_{page_idx + 1}_panel_{panel_idx + 1}"
+
+    loc_identifier, loc_description = _resolve_loc(parser_panel.loc)
+    loc_refs: list[Path] = []
+    if loc_identifier:
+        try:
+            loc = get_location(project, loc_identifier)
+        except FileNotFoundError:
+            pass  # not registered; identifier preserved, default description stays
+        else:
+            if loc.description:
+                loc_description = loc.description
+            loc_refs = loc.reference_images
+
+    chars: list[CharacterRef] = []
+    for name in parser_panel.chars:
+        try:
+            chars.append(get_character(project, name))
+        except FileNotFoundError:
+            chars.append(CharacterRef(identifier=name))
+
+    return PanelGenerationRequest(
+        panel_id=panel_id,
+        page_index=page_idx,
+        panel_index=panel_idx,
+        aspect_ratio=_compute_aspect_ratio(
+            parser_panel.slot, max_col, max_row, aspect_w, aspect_h, page.span,
+        ),
+        bleed_edges=_compute_bleed(parser_panel.slot, max_col, max_row),
+        loc_identifier=loc_identifier,
+        loc_description=loc_description,
+        loc_reference_images=loc_refs,
+        characters=chars,
+        shot_hint=parser_panel.shot or "",
+        mood=parser_panel.mood,
+        action=parser_panel.action or "",
+        dialogue_lines=[
+            DialogueLine(character=d.character, text=d.text, bubble_type=d.bubble_type)
+            for d in parser_panel.dialogue
+        ],
+        caption_boxes=[
+            CaptionBox(text=c.text, bg_color=c.bg, text_color=c.color, position=c.pos)
+            for c in parser_panel.captions
+        ],
+        sfx_lines=[
+            Sfx(text=s.text, color=s.color, position=s.pos)
+            for s in (getattr(parser_panel, "sfx", None) or [])
+        ],
+    )
+
+
+def _compute_aspect_ratio(
+    slot: Any, max_col: int, max_row: int,
+    aspect_w: int, aspect_h: int, span: int,
+) -> float:
+    """Panel aspect derived from canvas aspect, grid dims, and slot range.
+
+    For a spread (``span > 1``) the canvas is ``aspect_w × span`` wide by
+    ``aspect_h`` tall — per the standard, spread aspect is computed from
+    the base page aspect and the span count.
+    """
+    canvas_w = aspect_w * span
+    canvas_h = aspect_h
+    slot_cols = slot.cols[1] - slot.cols[0] + 1
+    slot_rows = slot.rows[1] - slot.rows[0] + 1
+    panel_w_units = canvas_w * slot_cols / max_col
+    panel_h_units = canvas_h * slot_rows / max_row
+    return panel_w_units / panel_h_units
+
+
+def _resolve_loc(loc_text: str) -> tuple[str | None, str]:
+    """Apply the §12 rule: no spaces → identifier, otherwise → free-text.
+
+    For an identifier, the default description is the identifier with
+    underscores swapped for spaces. If the location is registered, the
+    caller overrides this with the registered description.
+    """
+    loc_text = loc_text.strip()
+    if " " in loc_text:
+        return None, loc_text
+    return loc_text, loc_text.replace("_", " ")
+
+
+def _compute_bleed(slot: Any, max_col: int, max_row: int) -> set[str]:
+    """Edges the panel's slot touches. Subset of ``{top, right, bottom, left}``."""
+    edges: set[str] = set()
+    if slot.cols[0] <= 1:
+        edges.add("left")
+    if slot.cols[1] >= max_col:
+        edges.add("right")
+    if slot.rows[0] <= 1:
+        edges.add("top")
+    if slot.rows[1] >= max_row:
+        edges.add("bottom")
+    return edges
+
+
+# ---------------------------------------------------------------------------
+# JSON output
+# ---------------------------------------------------------------------------
+
+
+def _write_panel(project: Project, panel: PanelGenerationRequest) -> None:
+    out_path = project.enriched_dir / f"{panel.panel_id}.json"
+    data = _to_json_primitives(dataclasses.asdict(panel))
+    with out_path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def _to_json_primitives(obj: Any) -> Any:
+    """Recursively convert a Python value to JSON-native primitives.
+
+    Output is composed only of ``dict``, ``list``, ``str``, ``int``,
+    ``float``, ``bool``, ``None`` — safe to pass to :func:`json.dump`.
+
+    ``dataclasses.asdict`` recurses through dataclasses, dicts, lists, and
+    tuples but leaves :class:`pathlib.Path` and :class:`set` as-is. This
+    function fills that gap: ``Path`` becomes its string form, ``set``
+    becomes a sorted ``list`` (for deterministic on-disk output), and
+    ``tuple`` becomes ``list`` (JSON has no tuple type).
+    """
+    if isinstance(obj, Path):
+        return str(obj)
+    if isinstance(obj, set):
+        try:
+            return sorted(obj)
+        except TypeError:
+            return list(obj)
+    if isinstance(obj, tuple):
+        return [_to_json_primitives(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _to_json_primitives(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_json_primitives(v) for v in obj]
+    return obj

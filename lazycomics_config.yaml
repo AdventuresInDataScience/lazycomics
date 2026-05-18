@@ -1,0 +1,54 @@
+# lazycomics — project configuration
+#
+# Three-tier resolution: function-call args override these values, which
+# in turn override each module's hardcoded fallback. The values below
+# match the hardcoded fallbacks exactly, so this file is purely
+# documentary unless you edit it.
+#
+# `load_config()` searches: explicit path -> ./lazycomics_config.yaml ->
+# ~/.lazycomics_config.yaml -> {}. From inside this repo the file is
+# found via the cwd entry.
+
+
+# ---------------------------------------------------------------------------
+# Page assembly  (src/lazycomics/assembler.py)
+# ---------------------------------------------------------------------------
+assembly:
+  # Height of one physical page in pixels. Width is derived from
+  # `comic.aspect` in the CBML, so the page aspect is always preserved.
+  page_height_px: 3000
+
+  # Gap between adjacent panel cells, in pixels. No outer margin —
+  # gutters only appear between cells.
+  gutter_px: 20
+
+  # Gutter and canvas background fill colour (hex).
+  bg_color: "#ffffff"
+
+  # Relative aspect drift allowed before switching from stretch to
+  # cover-crop when fitting a panel image to its slot. 0.0 means always
+  # cover-crop unless the panel already matches the slot exactly.
+  # 0.05 would allow 5% drift before cropping kicks in.
+  stretch_tolerance: 0.0
+
+
+# ---------------------------------------------------------------------------
+# LLM-assisted prompt refinement  (src/lazycomics/llm_refiner.py)
+# ---------------------------------------------------------------------------
+# Used only if you call `refine_prompts_with_llm()`. Both `url` and
+# `model` must be set for that function to run; the defaults below point
+# at a local Ollama instance. For OpenAI / OpenRouter / vLLM / LM Studio,
+# replace `url` with the relevant OpenAI-compatible endpoint and (where
+# required) set `api_key`.
+llm:
+  url: http://localhost:11434/v1
+  model: llama3.1:8b
+
+  # Bearer token for hosted services. Leave null for local servers that
+  # don't require auth (Ollama, llama.cpp server, LM Studio).
+  api_key: null
+
+  # Override the built-in system prompt sent to the LLM. Leave null to
+  # use `DEFAULT_SYSTEM_PROMPT` from llm_refiner.py — that prompt is
+  # tuned for Flux-family image models and works well in most cases.
+  system_prompt: null

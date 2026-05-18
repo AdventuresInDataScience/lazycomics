@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lazycomics"
+version = "0.0.1"
+description = "Composable helpers for turning CBML scripts into .cbz comic books."
+readme = "README.md"
+# Lower bound: cbml-parser>=1.1 requires Python>=3.11.
+# Upper bound: MediaPipe (required for face-aware ref crop + text-bubble
+# placement) has no Python 3.13 wheels as of Nov 2025. Bump when wheels ship.
+requires-python = ">=3.11,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "lazycomics contributors" }]
+
+# Phase 1 deps — pure-Python steps that the rest of the package depends on.
+# MediaPipe is required, not optional: face detection drives both face-aware
+# reference cropping (ref_preparer) and bubble placement around faces
+# (text_renderer). Silent fallback would mask the user's CBML intent.
+dependencies = [
+    "cbml-parser>=1.1",
+    "Pillow",
+    "PyYAML",
+    "mediapipe",
+]
+
+[project.optional-dependencies]
+# Optional LLM-assisted prompt refinement.
+llm = ["requests"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+lazycomics = [
+    "assets/styles/*.json",
+    "assets/fonts/*.ttf",
+    "assets/pose_library/*.json",
+]
