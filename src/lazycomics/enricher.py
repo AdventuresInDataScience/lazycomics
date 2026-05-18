@@ -19,6 +19,7 @@ from typing import Any
 
 from lazycomics.asset_registry import get_character, get_location
 from lazycomics.models import (
+    BubbleRegion,
     CaptionBox,
     CharacterRef,
     DialogueLine,
@@ -138,7 +139,41 @@ def _build_panel(
             Sfx(text=s.text, color=s.color, position=s.pos)
             for s in (getattr(parser_panel, "sfx", None) or [])
         ],
+        bubble_layout=_compute_bubble_layout([c.identifier for c in chars]),
     )
+
+
+def _compute_bubble_layout(char_identifiers: list[str]) -> list[BubbleRegion]:
+    """Per-character planning region as fractions of the panel.
+
+    The default geometric split — N characters get N equal horizontal slices
+    in CBML authoring order (which is the parser's order, which by spec is
+    not semantically ordered, but is the only signal available without an
+    extra cue).
+
+    text_renderer treats these as the *predicted* region for each speaker:
+    where their dialogue bubbles should be placed and where their tail
+    should point. Phase 2's inpaint_manager will use the same regions to
+    pick inpaint masks, and will write back the *actual* painted regions
+    on a separate field so the renderer can prefer truth over prediction.
+
+    Single-character panels return one region covering the whole panel;
+    zero-character panels return an empty list.
+    """
+    if not char_identifiers:
+        return []
+    n = len(char_identifiers)
+    width = 1.0 / n
+    return [
+        BubbleRegion(
+            character=name,
+            x_frac=i * width,
+            y_frac=0.0,
+            width_frac=width,
+            height_frac=1.0,
+        )
+        for i, name in enumerate(char_identifiers)
+    ]
 
 
 def _compute_aspect_ratio(

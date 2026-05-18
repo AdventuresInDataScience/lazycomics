@@ -533,3 +533,79 @@ def test_aspect_persisted_in_json(env):
     _enrich_from_comic(env.project, comic)
     data = json.loads((env.project.enriched_dir / "page_1_panel_1.json").read_text())
     assert _approx(data["aspect_ratio"], 2 / 3)
+
+
+# ---------------------------------------------------------------------------
+# bubble_layout — per-character planning regions for text_renderer / inpaint
+# ---------------------------------------------------------------------------
+
+
+@_with_env
+def test_bubble_layout_empty_when_no_chars(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x", chars=[])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.bubble_layout == []
+
+
+@_with_env
+def test_bubble_layout_one_char_covers_whole_panel(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA"])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert len(panel.bubble_layout) == 1
+    region = panel.bubble_layout[0]
+    assert region.character == "NOVA"
+    assert _approx(region.x_frac, 0.0)
+    assert _approx(region.y_frac, 0.0)
+    assert _approx(region.width_frac, 1.0)
+    assert _approx(region.height_frac, 1.0)
+
+
+@_with_env
+def test_bubble_layout_two_chars_left_right_halves(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX"])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert len(panel.bubble_layout) == 2
+    left, right = panel.bubble_layout
+    assert left.character == "NOVA"
+    assert _approx(left.x_frac, 0.0)
+    assert _approx(left.width_frac, 0.5)
+    assert _approx(left.height_frac, 1.0)
+    assert right.character == "REX"
+    assert _approx(right.x_frac, 0.5)
+    assert _approx(right.width_frac, 0.5)
+
+
+@_with_env
+def test_bubble_layout_three_chars_thirds(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["A", "B", "C"])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert len(panel.bubble_layout) == 3
+    expected_width = 1 / 3
+    for i, region in enumerate(panel.bubble_layout):
+        assert _approx(region.x_frac, i * expected_width)
+        assert _approx(region.width_frac, expected_width)
+        assert _approx(region.height_frac, 1.0)
+
+
+@_with_env
+def test_bubble_layout_preserves_char_order(env):
+    """Region order matches the CBML chars: list (parser preserves authoring order)."""
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["REX", "NOVA", "GHOST"])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert [r.character for r in panel.bubble_layout] == ["REX", "NOVA", "GHOST"]
+
+
+@_with_env
+def test_bubble_layout_persisted_in_json(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX"])])])
+    _enrich_from_comic(env.project, comic)
+    data = json.loads((env.project.enriched_dir / "page_1_panel_1.json").read_text())
+    assert len(data["bubble_layout"]) == 2
+    assert data["bubble_layout"][0]["character"] == "NOVA"
+    assert _approx(data["bubble_layout"][0]["x_frac"], 0.0)
+    assert _approx(data["bubble_layout"][1]["x_frac"], 0.5)

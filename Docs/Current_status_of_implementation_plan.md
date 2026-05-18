@@ -3,8 +3,8 @@
 Companion to `Implementation_plan.md`. The plan was written before CBML
 v1.1 shipped and before any code existed. This document captures (a) what's
 been built, (b) what's deferred, (c) the points where reality has diverged
-from the original plan, and (d) the design principles that emerged during
-implementation.
+from the original plan, (d) the design principles that emerged during
+implementation, and (e) the contracts Phase 2 should populate.
 
 ---
 
@@ -12,14 +12,14 @@ implementation.
 
 | # | Module | Public API | Notes |
 |---|---|---|---|
-| 1 | `models.py` | 12 dataclasses | `Sfx` added for v1.1 |
+| 1 | `models.py` | 12 dataclasses | `Sfx` added for v1.1; Phase 2 fields tagged inline |
 | 2 | `config.py` | `load_config`, `cfg_get` | YAML; search `./` then `~/` |
 | 3 | `project.py` | `create_project`, `load_project` | `base_dir/{name}/` tree |
 | 4 | `asset_registry.py` | `register_*`, `get_*`, `set_lora` | Filesystem IS the registry |
-| 5 | `enricher.py` | `enrich` | Sfx propagation + per-panel `aspect_ratio` |
+| 5 | `enricher.py` | `enrich` | Sfx, aspect, `bubble_layout` per panel |
 | 6 | `prompt_builder.py` | `build_prompts` | Flux-tuned template |
 | 7 | `ref_preparer.py` | `prepare_references` | Face-aware crop (MediaPipe) |
-| 8 | `text_renderer.py` | `render_text` | Captions / SFX / bubbles |
+| 8 | `text_renderer.py` | `render_text` | Per-type shapes, face-aware placement, tails |
 | 9 | `assembler.py` | `assemble_pages` | Spread split at midline |
 | 10 | `exporter.py` | `export_cbz` | `ZIP_STORED` |
 
@@ -29,10 +29,20 @@ implementation.
 |---|---|---|---|
 | 14 | `llm_refiner.py` | `refine_prompts_with_llm` | OpenAI-compat HTTP |
 
-**Tests:** 208 passing. End-to-end smoke test verified: `create_project` →
-`register_*` → `enrich` → `build_prompts` → `prepare_references` →
-(placeholder PNGs in `panels/`) → `render_text` → `assemble_pages` →
-`export_cbz` produces a valid `.cbz` of the expected dimensions.
+**Repo artifacts:**
+
+* `lazycomics_config.yaml` at repo root — pre-populated with every key
+  the codebase reads via `cfg_get`. Values match each module's hardcoded
+  fallback, so the file is documentary unless edited. Three tests in
+  `test_config.py` prevent rot: existence check, key coverage, and value
+  parity against module defaults.
+
+**Tests:** 228 passing. End-to-end smoke verified by
+`tests/test_integration.py::test_full_pipeline_two_pages_spread_two_chars`:
+`create_project` → `register_*` → real-parser `enrich` → `build_prompts` →
+`prepare_references` → (placeholder PNGs in `panels/`) → `render_text` →
+`assemble_pages` → `export_cbz` produces a valid `.cbz` of the expected
+dimensions.
 
 ---
 
@@ -40,7 +50,7 @@ implementation.
 
 | # | Module | Purpose |
 |---|---|---|
-| 11 | `wan2gp_bridge.py` | Call Wan2GP API → panel PNGs |
+| 11 | `wan2gp_bridge.py` | Call Wan2GP CLI → panel PNGs |
 | 12 | `ai_toolkit_bridge.py` | Call AI Toolkit → trained LoRAs |
 | 13 | `upscaler.py` | Real-ESRGAN on assembled pages |
 
@@ -48,6 +58,9 @@ These are the Pinokio-launched heavy bridges. The Phase 1 pipeline treats
 them as black boxes — supply placeholder PNGs in `panels/` and the
 downstream steps don't care where the images came from. Plug Wan2GP in
 later without touching anything else.
+
+See `Phase 2 hand-off notes` at the bottom of this doc for the specific
+contracts text_renderer / assembler will read from Phase 2 output.
 
 ---
 
@@ -72,6 +85,43 @@ features that materially affect downstream code:
    threaded through the enricher (with the same `pos → position` field
    rename pattern used for `Caption.pos → CaptionBox.position`) and
    consumed by `text_renderer`.
+
+---
+
+## text_renderer — per-type shapes, face-aware placement, best-effort tails
+
+The renderer was upgraded from "rounded rectangle + crude top-or-bottom
+switch" to a comic-grade overlay layer:
+
+* **Four bubble shapes**, each implemented as Pillow geometry (no extra
+  deps, no second pass):
+  * `speech` → rounded rectangle + triangular tail toward the speaker
+  * `thought` → cloud outline (overlapping puff arcs) + trailing dots
+  * `shout` → 12-point starburst polygon, no tail
+  * `whisper` → rectangle with dashed border, no tail
+* **Per-speaker region placement.** The enricher now populates
+  `PanelGenerationRequest.bubble_layout` with a deterministic geometric
+  split (N speakers → N equal horizontal slices in CBML appearance order).
+  The renderer reads this and places each speaker's bubbles inside their
+  own region, so two-character panels don't overlap and don't fight for
+  the same corner.
+* **Face-aware top-vs-bottom.** Within each speaker's region, MediaPipe
+  face detection finds whichever face falls inside the region. Bubbles
+  are placed at the *opposite* vertical half (face in bottom → bubbles
+  go top, etc.) so they don't cover the speaker's head.
+* **Best-effort tails.** A speech tail points at the matched face in the
+  speaker's region; a thought "tail" is a chain of small circles along
+  the same line. If no face matches the region (off-panel speaker, model
+  painted character outside the predicted region), the renderer skips
+  the tail rather than guess wrong. Shout and whisper never draw a tail —
+  the shape itself carries the emphasis.
+
+**Best-effort caveat — needs Phase 2 truth source.** For multi-character
+panels the speaker→face match relies on *predicted* regions, not the
+generator's actual output. If Wan2GP places NOVA on the right when
+`bubble_layout` predicts left, the tail anchors at whatever face is
+inside the "left" region (which might be REX) and is therefore wrong.
+This is the single most important Phase 2 hand-off contract — see below.
 
 ---
 
@@ -101,7 +151,9 @@ file rather than blanking it.
 
 Used in `llm_refiner` (system prompt, model, URL, api_key) and
 `assembler` (page_height_px, gutter_px, bg_color, stretch_tolerance).
-Consistent across the package so users learn the pattern once.
+Consistent across the package so users learn the pattern once. The
+shipped `lazycomics_config.yaml` documents every key the codebase reads
+and matches the hardcoded fallbacks; rot is prevented by config tests.
 
 ### 4. Skip-if-exists by default; `force=True` to overwrite
 
@@ -113,8 +165,9 @@ the pipeline. Re-run is always safe.
 
 Modules that depend on `cbml_parser` (`enricher`, `assembler`) factor out
 `_X_from_comic(project, comic, ...)` as a testable seam. The public
-function lazy-imports the parser; tests pass `SimpleNamespace` mocks to
-the seam. No tests require the real parser to be installed.
+function lazy-imports the parser; per-module tests pass `SimpleNamespace`
+mocks to the seam. `tests/test_integration.py` covers the real parser
+path so any drift in the parser API surfaces there.
 
 ### 6. Filesystem as source of truth
 
@@ -152,7 +205,7 @@ hard dep, imported at module top.
 Where we'd otherwise mock a method or class, we use a module-level
 function that tests monkeypatch directly. Examples:
 `llm_refiner._call_llm`, `ref_preparer._detect_face_centre`,
-`text_renderer._bubbles_should_go_top`. Simpler than dependency injection
+`text_renderer._detect_all_faces`. Simpler than dependency injection
 or fixture frameworks; works in plain unittest-style code.
 
 ---
@@ -161,9 +214,12 @@ or fixture frameworks; works in plain unittest-style code.
 
 - **llm_refiner shipped early (Phase 2 → during Phase 1).** It's
   self-contained and the prompt-build flow benefits from it. No harm.
-- **`bubble_layout` field on `PanelGenerationRequest`** is in the model
-  but currently unused. `text_renderer` auto-places bubbles rather than
-  reading hand-set layout. Wire it up when a user wants manual control.
+- **`bubble_layout` is now populated by the enricher.** Deterministic
+  geometric split (N speakers → N equal slices, CBML appearance order).
+  Consumed by `text_renderer` for per-speaker region placement; will
+  also be consumed by Phase 2's `inpaint_manager` as the inpaint mask
+  plan. Authors can override via the JSON between stages, but the
+  default is no longer empty.
 - **Per-asset `list_characters` / `validate_assets` / `get_lora_stack`**
   are in the plan but not implemented. Will land when their consumer
   (likely Phase 2's `build_images`) arrives.
@@ -173,3 +229,115 @@ or fixture frameworks; works in plain unittest-style code.
 - **`page_size` parameter dropped in favour of `page_height_px`.** The
   CBML parser owns aspect-name resolution; we just need a resolution
   knob. Width derives from `comic.aspect`.
+- **Repo structure is flat `src/lazycomics/`**, not the
+  `core/` + `pipeline/` + `ui/` subpackages the plan described. The
+  dataclasses-as-contract design (plan §13) doesn't actually need the
+  subpackages; less import-path ceremony.
+
+---
+
+## Phase 2 hand-off notes
+
+Things to be mindful of when starting Phase 2. Each is a specific
+contract that Phase 1 has built around but does not itself populate.
+
+### 1. Character truth source — **`actual_character_regions`** (NEW field)
+
+`text_renderer`'s tail anchoring currently relies on the *predicted*
+`bubble_layout` regions matching where Wan2GP actually painted each
+character. For single-character panels this is fine (one face = one
+speaker, no ambiguity). For multi-character panels with one Wan2GP call
+this would break — but the plan §7.10 routes multi-character panels
+through `inpaint_manager`, which means by construction we *choose* each
+non-primary character's mask.
+
+**Phase 2 contract:** when `inpaint_manager` paints a character at a
+known mask region, it should write that region back to the panel's
+enriched JSON as a new field — proposed shape:
+
+```json
+"actual_character_regions": {
+  "NOVA": [120, 340, 280, 540],
+  "REX":  [520, 320, 700, 560]
+}
+```
+
+`text_renderer._render_dialogue` already has a TODO marker at the top of
+the function noting this — when present, it should prefer
+`actual_character_regions` over `bubble_layout`. The matching logic in
+`_select_speaker_face` then becomes "find faces inside the *actual*
+region for this speaker", which removes the ambiguity entirely.
+
+For panels with no inpaint passes (single character), the field is absent
+and the existing `bubble_layout` + face-detection path handles it.
+
+### 2. `bubble_layout` already serves double duty
+
+The same `bubble_layout` field that `text_renderer` uses now should be
+what `inpaint_manager` reads to choose its SAM-prompted masks. They're
+the same regions: predicted-where-each-character-goes. The enricher
+populates them today; Phase 2 just needs to consume them.
+
+If Phase 2 chooses different actual mask regions (e.g. SAM segments to
+something slightly different than the predicted rectangle), it should
+write that back via `actual_character_regions` per (1) so the renderer
+gets truth.
+
+### 3. Dead `PanelGenerationRequest` fields
+
+The following fields are declared but unpopulated; `models.py` tags them
+inline with `# phase 2`:
+
+* `pixel_rect` — panel position within the page canvas. Computed today
+  by `assembler._render_page_canvas`; not stored on the request.
+  Populate during Phase 2 if any later stage needs per-panel coords.
+* `primary_character`, `char_generation_strategy`, `inpaint_order`,
+  `occlusion_order` — the multi-character strategy selection from plan
+  §7.4. Belongs in the layer that bridges enrichment to image generation.
+* `composition_flags`, `panel_context` — the "leave_negative_space" /
+  "establishing_panel" hints from plan §7.4. Not consumed by any current
+  stage; revisit when prompt building grows them up.
+* `pose_ref`, `lora_stack` — ControlNet/LoRA wiring. Phase 2.
+* `prompt`, `negative_prompt` — currently cached as `.txt` files by
+  `prompt_builder`; the in-dataclass slots are for the generator if it
+  wants to skip the file round-trip per panel.
+
+Each field has a clear consumer in Phase 2 already.
+
+### 4. `PageLayout` is unused — decide before Phase 2 lands
+
+`PageLayout` is declared in `models.py` with a loud docstring note. The
+pipeline reads page geometry directly off the parsed CBML inside the
+assembler (and the enricher derives per-panel aspect itself), so
+nothing constructs or consumes a `PageLayout`. During the Phase 2
+refactor, either populate it during enrich and have the assembler
+consume it (one shared page-geometry contract instead of two ad-hoc
+`_grid_dims` helpers), or delete it.
+
+### 5. `text_renderer` runs *after* image generation
+
+Phase 2 must respect the existing pipeline order: `panels/<id>.png`
+written by Wan2GP → `panels_text/<id>.png` written by `text_renderer`
+→ `pages/page_NNN.png` written by `assembler`. The renderer reads the
+generated panel image (for face detection) and the enriched JSON
+(for dialogue/captions/sfx/bubble_layout/actual_character_regions). It
+does NOT need any Phase 2 module to be importable.
+
+### 6. Heuristic correctness ceiling
+
+Until Phase 2 ships `actual_character_regions`, multi-character tail
+anchoring is best-effort. The current document-order matching of
+speakers to `bubble_layout` regions catches the common "two characters
+facing each other, taking turns" case; it can fail if the generator
+flips character positions (NOVA painted on the right when predicted
+left). The renderer fails *closed* in that case — no tail rather than
+a wrong tail — so the regression is "missing tail", not "tail pointing
+at the wrong face". Acceptable for Phase 1 review; flip to truth-source
+the moment Phase 2 lands.
+
+### 7. Watch the SAM dep when inpaint lands
+
+`inpaint_manager` is the heaviest Phase 2 module. Plan §7.10 calls for
+SAM (Segment Anything) + depth ControlNet + diffusers inpaint pipeline.
+The model weights are large (~2.5GB for SAM alone). Lazy-import per
+principle #9; do not import at package top.

@@ -53,9 +53,9 @@ class _Env:
         # MediaPipe seams: covered in isolation by the per-module tests;
         # here we care about pipeline integration, not the detector.
         self._orig_face = ref_preparer._detect_face_centre
-        self._orig_safe = text_renderer._bubbles_should_go_top
+        self._orig_faces = text_renderer._detect_all_faces
         ref_preparer._detect_face_centre = lambda img: None
-        text_renderer._bubbles_should_go_top = lambda img: True
+        text_renderer._detect_all_faces = lambda img: []
 
     def write_cbml(self, body: str) -> Path:
         self.cbml_path.write_text(body, encoding="utf-8")
@@ -71,7 +71,7 @@ class _Env:
 
     def close(self):
         ref_preparer._detect_face_centre = self._orig_face
-        text_renderer._bubbles_should_go_top = self._orig_safe
+        text_renderer._detect_all_faces = self._orig_faces
         self.tmp.cleanup()
 
 
