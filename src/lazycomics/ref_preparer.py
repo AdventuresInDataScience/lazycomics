@@ -7,6 +7,14 @@ face-aware crop (via MediaPipe), plus zero or more **supporting** refs
 (style, location, additional characters) that pass through at their
 native aspect ratio.
 
+The primary ref is selected from the ``primary_character``'s registered
+images when the enricher has set that field — this ensures the ref
+matches the character generated in the base Flux pass. Supporting refs
+follow ``inpaint_order`` so the bridge receives them in generation
+sequence. Both fall back to the original Phase 1 heuristics (first
+char with a ref, original chars: order) when processing older enriched
+JSON that lacks these fields.
+
 File layout (plan §11):
 
     refs_prepared/
@@ -162,7 +170,18 @@ _WIDE_SHOT_KEYWORDS = ("wide", "establishing", "establish", "long shot", "bird")
 
 
 def _select_primary_source(panel: dict[str, Any]) -> Path | None:
-    """Choose the source image that becomes the primary reference."""
+    """Choose the source image that becomes the primary reference.
+
+    Resolution order:
+    1. Wide / establishing shots → location ref (background dominates).
+    2. No characters → location ref.
+    3. ``primary_character`` field (set by the enricher) → that character's
+       first ref image. This aligns the primary reference with the character
+       generated in the base Flux pass.
+    4. First character that has a ref image (fallback for older enriched
+       JSON or when the primary has no registered refs).
+    5. Location ref, then ``None``.
+    """
     shot = (panel.get("shot_hint") or "").lower()
     chars = panel.get("characters") or []
     loc_refs = [Path(p) for p in (panel.get("loc_reference_images") or [])]
@@ -177,32 +196,55 @@ def _select_primary_source(panel: dict[str, Any]) -> Path | None:
     if not chars and loc_refs:
         return loc_refs[0]
 
-    # Default: first ref of the first character that has one.
+    # Prefer the primary character's ref when the enricher set one.
+    primary_name = panel.get("primary_character")
+    if primary_name:
+        for char in chars:
+            if char.get("identifier") == primary_name:
+                char_refs = char.get("reference_images") or []
+                if char_refs:
+                    return Path(char_refs[0])
+                break  # primary found but has no refs — fall through
+
+    # Fallback: first character that has a ref image.
     for char in chars:
         char_refs = char.get("reference_images") or []
         if char_refs:
             return Path(char_refs[0])
 
-    # Fallback: location ref if available, else nothing.
+    # Last resort: location ref if available, else nothing.
     return loc_refs[0] if loc_refs else None
 
 
 def _collect_supporting(panel: dict[str, Any], primary: Path) -> list[Path]:
-    """Non-primary refs for the panel: location refs + first char ref each."""
+    """Non-primary refs for the panel: location refs + character refs.
+
+    Character refs are ordered by ``inpaint_order`` when available (so the
+    bridge receives them in generation sequence). Falls back to the
+    original ``characters`` list order for older enriched JSON.
+    """
     refs: list[Path] = []
 
+    # Location refs first — background context.
     for p in panel.get("loc_reference_images") or []:
         path = Path(p)
         if path != primary and path not in refs:
             refs.append(path)
 
-    for char in panel.get("characters") or []:
+    # Build a lookup: identifier → first ref image path.
+    chars = panel.get("characters") or []
+    char_first_ref: dict[str, Path] = {}
+    for char in chars:
         char_refs = char.get("reference_images") or []
-        if not char_refs:
-            continue
-        first = Path(char_refs[0])
-        if first != primary and first not in refs:
-            refs.append(first)
+        if char_refs:
+            char_first_ref[char["identifier"]] = Path(char_refs[0])
+
+    # Order by inpaint_order if available; otherwise chars list order.
+    inpaint_order = panel.get("inpaint_order") or [c["identifier"] for c in chars]
+    for name in inpaint_order:
+        path = char_first_ref.get(name)
+        if path and path != primary and path not in refs:
+            refs.append(path)
 
     return refs
 

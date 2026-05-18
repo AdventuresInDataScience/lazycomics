@@ -52,3 +52,44 @@ llm:
   # use `DEFAULT_SYSTEM_PROMPT` from llm_refiner.py — that prompt is
   # tuned for Flux-family image models and works well in most cases.
   system_prompt: null
+
+
+# ---------------------------------------------------------------------------
+# Wan2GP generation bridge  (src/lazycomics/wan2gp_bridge.py)
+# ---------------------------------------------------------------------------
+# Required for `generate_panels()`. Both `wgp_root` and `python_bin`
+# must point to your Pinokio-managed Wan2GP install — there are no
+# fallback defaults for these since they depend on your local paths.
+#
+# To find them: open Pinokio, locate the Wan2GP app, and note its
+# install directory. `python_bin` is the Python binary inside the
+# env that Pinokio created (typically env/bin/python or env/Scripts/python).
+wan2gp:
+  # Absolute path to the Wan2GP repo root inside Pinokio.
+  wgp_root: C:\pinokio\api\wan.git\app
+
+  # Python binary inside the Pinokio-managed env for Wan2GP.
+  python_bin: C:\pinokio\api\wan.git\app\env\Scripts\python.exe
+
+  # Wan2GP model_type (flat key, not nested). Matches filename in defaults/
+  # without .json. Use "Export Settings" in Wan2GP UI to verify.
+  architecture: flux2_klein_9b
+
+  # Default denoising steps (Klein 9B uses 4 by default).
+  default_steps: 4
+
+  # Guidance scale.
+  guidance_scale: 5
+
+  # video_prompt_type: "KI" for Klein Image generation.
+  video_prompt_type: KI
+
+  # Long-edge resolution in pixels. Short edge derived from panel
+  # aspect ratio and snapped to nearest 64.
+  base_resolution: 1024
+
+  # Fixed seed for reproducibility. null = random per panel.
+  seed: null
+
+  # Extra CLI flags passed to wgp.py (e.g. ["--attention", "sdpa"]).
+  cli_args: []

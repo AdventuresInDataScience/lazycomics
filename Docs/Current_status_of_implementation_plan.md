@@ -46,18 +46,44 @@ dimensions.
 
 ---
 
-## Phase 2 — generation bridges (pending)
+## Phase 2 — generation bridges (in progress)
 
-| # | Module | Purpose |
-|---|---|---|
-| 11 | `wan2gp_bridge.py` | Call Wan2GP CLI → panel PNGs |
-| 12 | `ai_toolkit_bridge.py` | Call AI Toolkit → trained LoRAs |
-| 13 | `upscaler.py` | Real-ESRGAN on assembled pages |
+| # | Module | Purpose | Status |
+|---|---|---|---|
+| — | enricher updates | Populate strategy/primary/inpaint fields | ✓ done |
+| — | ref_preparer updates | primary_character + inpaint_order aware | ✓ done |
+| 11 | `wan2gp_bridge.py` | Call Wan2GP CLI → panel PNGs | ✓ done |
+| 12 | `upscaler.py` | Real-ESRGAN on assembled pages | next |
+| 13 | `ai_toolkit_bridge.py` | Call AI Toolkit → trained LoRAs | pending |
 
 These are the Pinokio-launched heavy bridges. The Phase 1 pipeline treats
 them as black boxes — supply placeholder PNGs in `panels/` and the
 downstream steps don't care where the images came from. Plug Wan2GP in
 later without touching anything else.
+
+**Enricher updates (done):** The enricher now populates three fields that
+were previously declared but empty:
+
+* `char_generation_strategy` — `"single"` for 0–1 chars, `"multi_inpaint"`
+  for 2+. Consumed by `wan2gp_bridge` to decide single-pass vs multi-pass.
+* `primary_character` — the character generated in the base pass. Resolved
+  by: (1) regex match of character identifier as a word boundary in the
+  `shot` string, case-insensitive; (2) most dialogue lines; (3) first in
+  CBML `chars:` order.
+* `inpaint_order` — primary first, remaining characters sorted by dialogue
+  count descending (most important gets the cleanest canvas). Stable on
+  equal counts (preserves CBML order).
+
+**Remaining deferred fields (kept, flagged for review):**
+
+* `occlusion_order` — populate when shot-hint depth-cue parsing lands.
+* `composition_flags` — populate when `prompt_builder` grows to consume them.
+* `panel_context` — populate when a consumer arrives.
+* `pose_ref` — populate when ControlNet integration lands.
+* `lora_stack` — populate when `ai_toolkit_bridge` lands.
+* `pixel_rect` — populate when a post-generation stage needs per-panel coords.
+* `PageLayout` — kept on contract; populate if a consumer arises, otherwise
+  review for deletion once Phase 2 stabilises.
 
 See `Phase 2 hand-off notes` at the bottom of this doc for the specific
 contracts text_renderer / assembler will read from Phase 2 output.
@@ -283,36 +309,71 @@ something slightly different than the predicted rectangle), it should
 write that back via `actual_character_regions` per (1) so the renderer
 gets truth.
 
-### 3. Dead `PanelGenerationRequest` fields
+### 3. `PanelGenerationRequest` field status
 
-The following fields are declared but unpopulated; `models.py` tags them
-inline with `# phase 2`:
+**Now populated by the enricher:**
+* `primary_character`, `char_generation_strategy`, `inpaint_order` — the
+  multi-character strategy selection from plan §7.4. Consumed by
+  `wan2gp_bridge` to route single-pass vs multi-inpaint generation.
 
+**Deferred — kept on contract, flagged for review:**
 * `pixel_rect` — panel position within the page canvas. Computed today
   by `assembler._render_page_canvas`; not stored on the request.
-  Populate during Phase 2 if any later stage needs per-panel coords.
-* `primary_character`, `char_generation_strategy`, `inpaint_order`,
-  `occlusion_order` — the multi-character strategy selection from plan
-  §7.4. Belongs in the layer that bridges enrichment to image generation.
+  Populate if a post-generation stage needs per-panel coords.
+* `occlusion_order` — populate when shot-hint depth-cue parsing lands.
 * `composition_flags`, `panel_context` — the "leave_negative_space" /
-  "establishing_panel" hints from plan §7.4. Not consumed by any current
-  stage; revisit when prompt building grows them up.
-* `pose_ref`, `lora_stack` — ControlNet/LoRA wiring. Phase 2.
+  "establishing_panel" hints from plan §7.4. Populate when prompt
+  building grows to consume them.
+* `pose_ref`, `lora_stack` — ControlNet/LoRA wiring. Populate when
+  their respective bridges land.
 * `prompt`, `negative_prompt` — currently cached as `.txt` files by
-  `prompt_builder`; the in-dataclass slots are for the generator if it
+  `prompt_builder`; the in-dataclass slots are for the bridge if it
   wants to skip the file round-trip per panel.
 
-Each field has a clear consumer in Phase 2 already.
+Any field still deferred when Phase 2 stabilises will be reviewed for
+removal.
 
-### 4. `PageLayout` is unused — decide before Phase 2 lands
+**Wan2GP bridge (done):** ``wan2gp_bridge.py`` shells out to Wan2GP
+headlessly inside the Pinokio-managed Python environment via
+``wgp.py --process queue.zip --output-dir``. No Gradio, no server —
+just a subprocess into the correct env.
 
-`PageLayout` is declared in `models.py` with a loud docstring note. The
-pipeline reads page geometry directly off the parsed CBML inside the
-assembler (and the enricher derives per-panel aspect itself), so
-nothing constructs or consumes a `PageLayout`. During the Phase 2
-refactor, either populate it during enrich and have the assembler
-consume it (one shared page-geometry contract instead of two ad-hoc
-`_grid_dims` helpers), or delete it.
+Architecture:
+
+* ``generate_panels(project, panels, force, config)`` — public API,
+  follows the same pattern as other modules (skip-if-exists, panels
+  filter, force flag).
+* ``_build_wangp_task()`` — **sole adapter** between lazycomics and
+  Wan2GP. Constructs the settings dict that goes into the queue. If
+  field names change between Wan2GP versions, only this function
+  needs updating.
+* ``_build_queue_zip()`` — packages tasks + embedded ref images into
+  the ZIP format Wan2GP's ``--process`` expects (containing ``queue.json``).
+* ``_run_wangp()`` — subprocess call with ``cwd`` set to ``wgp_root``,
+  using ``python_bin`` from the Pinokio env.
+* ``_collect_outputs()`` — positional pairing of Wan2GP output images
+  to panel IDs, copies to ``panels/``.
+
+Config (required in ``lazycomics_config.yaml``)::
+
+    wan2gp:
+      wgp_root: ~/pinokio/api/wan2gp.git/Wan2GP
+      python_bin: ~/pinokio/api/wan2gp.git/env/bin/python
+      architecture: flux2_klein_9b
+      default_steps: 28
+      base_resolution: 1024
+      video_prompt_type: KI # auto-derived if omitted (T/K/KI depending on ref count)
+
+Resolution computation: long edge = ``base_resolution``, short edge
+derived from the panel's ``aspect_ratio`` and snapped to the nearest
+multiple of 64.
+
+### 4. `PageLayout` — kept, review later
+
+`PageLayout` is declared in `models.py`. Nothing constructs or consumes
+it. Kept on the contract: populate if a consumer arises (e.g. a shared
+page-geometry contract replacing the ad-hoc `_grid_dims` helpers),
+otherwise review for deletion once Phase 2 stabilises.
 
 ### 5. `text_renderer` runs *after* image generation
 

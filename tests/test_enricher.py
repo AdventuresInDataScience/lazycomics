@@ -609,3 +609,192 @@ def test_bubble_layout_persisted_in_json(env):
     assert data["bubble_layout"][0]["character"] == "NOVA"
     assert _approx(data["bubble_layout"][0]["x_frac"], 0.0)
     assert _approx(data["bubble_layout"][1]["x_frac"], 0.5)
+
+
+# ---------------------------------------------------------------------------
+# char_generation_strategy — single vs multi_inpaint
+# ---------------------------------------------------------------------------
+
+
+@_with_env
+def test_strategy_single_when_no_chars(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x", chars=[])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.char_generation_strategy == "single"
+
+
+@_with_env
+def test_strategy_single_when_one_char(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA"])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.char_generation_strategy == "single"
+
+
+@_with_env
+def test_strategy_multi_inpaint_when_two_chars(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX"])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.char_generation_strategy == "multi_inpaint"
+
+
+@_with_env
+def test_strategy_multi_inpaint_when_three_chars(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX", "GHOST"])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.char_generation_strategy == "multi_inpaint"
+
+
+# ---------------------------------------------------------------------------
+# primary_character — shot-hint match, dialogue-count fallback, first-listed
+# ---------------------------------------------------------------------------
+
+
+@_with_env
+def test_primary_none_when_no_chars(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x", chars=[])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.primary_character is None
+
+
+@_with_env
+def test_primary_is_sole_char_when_one(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA"])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.primary_character == "NOVA"
+
+
+@_with_env
+def test_primary_from_shot_hint_regex(env):
+    """shot: 'closeup on NOVA' names NOVA → primary, regardless of dialogue."""
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["REX", "NOVA"],
+                                     shot="closeup on NOVA",
+                                     dialogue=[
+                                         _dl("REX", "Line 1."),
+                                         _dl("REX", "Line 2."),
+                                         _dl("REX", "Line 3."),
+                                     ])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.primary_character == "NOVA"
+
+
+@_with_env
+def test_primary_from_shot_hint_case_insensitive(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX"],
+                                     shot="medium shot of rex")])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.primary_character == "REX"
+
+
+@_with_env
+def test_primary_fallback_to_most_dialogue(env):
+    """No shot-hint match → most dialogue lines wins."""
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX"],
+                                     dialogue=[
+                                         _dl("NOVA", "One."),
+                                         _dl("REX", "Two."),
+                                         _dl("REX", "Three."),
+                                     ])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.primary_character == "REX"
+
+
+@_with_env
+def test_primary_fallback_to_first_listed_no_dialogue(env):
+    """No shot match, no dialogue → first char in CBML authoring order."""
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["REX", "NOVA"])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.primary_character == "REX"
+
+
+@_with_env
+def test_primary_dialogue_tie_favours_first_listed(env):
+    """Equal dialogue counts → first in chars: order wins."""
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX"],
+                                     dialogue=[
+                                         _dl("NOVA", "Same."),
+                                         _dl("REX", "Count."),
+                                     ])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.primary_character == "NOVA"
+
+
+# ---------------------------------------------------------------------------
+# inpaint_order — primary first, rest by dialogue count descending
+# ---------------------------------------------------------------------------
+
+
+@_with_env
+def test_inpaint_order_empty_when_no_chars(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x", chars=[])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.inpaint_order == []
+
+
+@_with_env
+def test_inpaint_order_single_char(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA"])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.inpaint_order == ["NOVA"]
+
+
+@_with_env
+def test_inpaint_order_primary_first(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX"],
+                                     shot="closeup on REX")])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.inpaint_order[0] == "REX"
+    assert panel.inpaint_order == ["REX", "NOVA"]
+
+
+@_with_env
+def test_inpaint_order_rest_sorted_by_dialogue_count(env):
+    """After the primary, remaining chars sorted by dialogue lines descending."""
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX", "GHOST"],
+                                     shot="closeup on NOVA",
+                                     dialogue=[
+                                         _dl("REX", "A."),
+                                         _dl("GHOST", "B."),
+                                         _dl("GHOST", "C."),
+                                         _dl("GHOST", "D."),
+                                         _dl("REX", "E."),
+                                     ])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    # NOVA first (primary via shot), then GHOST (3 lines), then REX (2 lines)
+    assert panel.inpaint_order == ["NOVA", "GHOST", "REX"]
+
+
+@_with_env
+def test_inpaint_order_rest_stable_on_equal_dialogue(env):
+    """Equal dialogue count → preserves original chars: order among non-primary."""
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX", "GHOST"],
+                                     dialogue=[
+                                         _dl("NOVA", "Line."),
+                                     ])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    # NOVA primary (most dialogue), REX & GHOST tied at 0 → original order
+    assert panel.inpaint_order == ["NOVA", "REX", "GHOST"]
+
+
+@_with_env
+def test_strategy_and_order_persisted_in_json(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX"],
+                                     dialogue=[_dl("REX", "Hello.")])])])
+    _enrich_from_comic(env.project, comic)
+    data = json.loads((env.project.enriched_dir / "page_1_panel_1.json").read_text())
+    assert data["char_generation_strategy"] == "multi_inpaint"
+    assert data["primary_character"] == "REX"
+    assert data["inpaint_order"] == ["REX", "NOVA"]

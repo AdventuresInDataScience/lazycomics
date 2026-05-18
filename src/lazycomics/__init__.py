@@ -19,6 +19,7 @@ from lazycomics.config import cfg_get, load_config
 from lazycomics.enricher import enrich
 from lazycomics.exporter import export_cbz
 from lazycomics.llm_refiner import refine_prompts_with_llm
+from lazycomics.wan2gp_bridge import generate_panels
 from lazycomics.models import (
     BubbleRegion,
     CaptionBox,
@@ -76,6 +77,8 @@ __all__ = [
     "render_text",
     # assembler
     "assemble_pages",
+    # wan2gp_bridge
+    "generate_panels",
     # exporter
     "export_cbz",
 ]

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -112,6 +113,17 @@ def _build_panel(
         except FileNotFoundError:
             chars.append(CharacterRef(identifier=name))
 
+    char_names = [c.identifier for c in chars]
+    dialogue = [
+        DialogueLine(character=d.character, text=d.text, bubble_type=d.bubble_type)
+        for d in parser_panel.dialogue
+    ]
+    strategy = _compute_char_strategy(char_names)
+    primary = _select_primary_character(
+        char_names, parser_panel.shot or "", dialogue,
+    )
+    inpaint_order = _compute_inpaint_order(char_names, primary, dialogue)
+
     return PanelGenerationRequest(
         panel_id=panel_id,
         page_index=page_idx,
@@ -124,13 +136,13 @@ def _build_panel(
         loc_description=loc_description,
         loc_reference_images=loc_refs,
         characters=chars,
+        primary_character=primary,
+        char_generation_strategy=strategy,
+        inpaint_order=inpaint_order,
         shot_hint=parser_panel.shot or "",
         mood=parser_panel.mood,
         action=parser_panel.action or "",
-        dialogue_lines=[
-            DialogueLine(character=d.character, text=d.text, bubble_type=d.bubble_type)
-            for d in parser_panel.dialogue
-        ],
+        dialogue_lines=dialogue,
         caption_boxes=[
             CaptionBox(text=c.text, bg_color=c.bg, text_color=c.color, position=c.pos)
             for c in parser_panel.captions
@@ -139,7 +151,7 @@ def _build_panel(
             Sfx(text=s.text, color=s.color, position=s.pos)
             for s in (getattr(parser_panel, "sfx", None) or [])
         ],
-        bubble_layout=_compute_bubble_layout([c.identifier for c in chars]),
+        bubble_layout=_compute_bubble_layout(char_names),
     )
 
 
@@ -174,6 +186,89 @@ def _compute_bubble_layout(char_identifiers: list[str]) -> list[BubbleRegion]:
         )
         for i, name in enumerate(char_identifiers)
     ]
+
+
+def _compute_char_strategy(char_names: list[str]) -> str:
+    """``"single"`` for 0–1 characters, ``"multi_inpaint"`` for 2+.
+
+    The wan2gp_bridge uses this to decide whether to generate the panel in
+    one pass or to run multiple inpaint passes (one per additional character).
+    """
+    return "multi_inpaint" if len(char_names) >= 2 else "single"
+
+
+def _select_primary_character(
+    char_names: list[str],
+    shot_hint: str,
+    dialogue: list[DialogueLine],
+) -> str | None:
+    """Pick the character generated first (before any inpaint passes).
+
+    Resolution order (plan §7.4):
+    1. Regex match — if any character identifier appears as a word boundary
+       in the ``shot`` string (case-insensitive), the first match wins. This
+       covers explicit CBML cues like ``shot: closeup on NOVA``.
+    2. Dialogue count — the character with the most dialogue lines is the
+       focal speaker for the panel.
+    3. First listed — fall back to CBML ``chars:`` order.
+
+    Returns ``None`` for panels with no characters.
+    """
+    if not char_names:
+        return None
+    if len(char_names) == 1:
+        return char_names[0]
+
+    # 1. Shot-hint regex match
+    if shot_hint:
+        shot_lower = shot_hint.lower()
+        for name in char_names:
+            if re.search(rf"\b{re.escape(name.lower())}\b", shot_lower):
+                return name
+
+    # 2. Most dialogue lines
+    counts: dict[str, int] = {n: 0 for n in char_names}
+    for dl in dialogue:
+        if dl.character in counts:
+            counts[dl.character] += 1
+    max_count = max(counts.values())
+    if max_count > 0:
+        for name in char_names:
+            if counts[name] == max_count:
+                return name
+
+    # 3. First listed
+    return char_names[0]
+
+
+def _compute_inpaint_order(
+    char_names: list[str],
+    primary: str | None,
+    dialogue: list[DialogueLine],
+) -> list[str]:
+    """Character generation order: primary first, rest by dialogue count desc.
+
+    For single-character or zero-character panels this returns the
+    trivial list (``[primary]`` or ``[]``). For multi-character panels the
+    primary is generated in the base pass and the remaining characters are
+    inpainted in dialogue-count-descending order (most important first, so
+    their masks get the cleanest canvas).
+    """
+    if not char_names:
+        return []
+    if len(char_names) == 1:
+        return list(char_names)
+
+    rest = [n for n in char_names if n != primary]
+
+    # Sort rest by dialogue count descending, stable on original order
+    counts: dict[str, int] = {n: 0 for n in rest}
+    for dl in dialogue:
+        if dl.character in counts:
+            counts[dl.character] += 1
+    rest.sort(key=lambda n: counts[n], reverse=True)
+
+    return [primary] + rest if primary else rest
 
 
 def _compute_aspect_ratio(

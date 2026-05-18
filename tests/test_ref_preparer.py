@@ -332,6 +332,80 @@ def test_no_sources_skips_panel(env):
 
 
 # ---------------------------------------------------------------------------
+# Primary selection — primary_character awareness
+# ---------------------------------------------------------------------------
+
+
+@_with_env
+def test_primary_character_selects_correct_ref(env):
+    """When enricher sets primary_character=REX, REX's ref is the primary."""
+    nova_src = env.make_src("nova.png", 600, 600, colour=(255, 0, 0))
+    rex_src = env.make_src("rex.png", 600, 600, colour=(0, 0, 255))
+    env.write_enriched(
+        "p1",
+        characters=[_char("NOVA", [nova_src]), _char("REX", [rex_src])],
+        primary_character="REX",
+    )
+    prepare_references(env.project)
+
+    out = Image.open(env.project.refs_prepared_dir / "p1_ref.png").convert("RGB")
+    r, _, b = out.getpixel((out.size[0] // 2, out.size[1] // 2))
+    assert b > r, f"expected blue (REX), got rgb=({r},_,{b})"
+
+
+@_with_env
+def test_primary_character_no_refs_falls_back_to_first_char(env):
+    """primary_character has no reference images → fall through to first char with refs."""
+    nova_src = env.make_src("nova.png", 600, 600, colour=(255, 0, 0))
+    env.write_enriched(
+        "p1",
+        characters=[_char("NOVA", [nova_src]), _char("REX", [])],
+        primary_character="REX",
+    )
+    prepare_references(env.project)
+
+    out = Image.open(env.project.refs_prepared_dir / "p1_ref.png").convert("RGB")
+    r, _, b = out.getpixel((out.size[0] // 2, out.size[1] // 2))
+    assert r > b, f"expected red (NOVA fallback), got rgb=({r},_,{b})"
+
+
+@_with_env
+def test_no_primary_character_backward_compat(env):
+    """Older enriched JSON without primary_character → first char, same as Phase 1."""
+    nova_src = env.make_src("nova.png", 600, 600, colour=(255, 0, 0))
+    rex_src = env.make_src("rex.png", 600, 600, colour=(0, 0, 255))
+    env.write_enriched(
+        "p1",
+        characters=[_char("NOVA", [nova_src]), _char("REX", [rex_src])],
+        # No primary_character key at all
+    )
+    prepare_references(env.project)
+
+    out = Image.open(env.project.refs_prepared_dir / "p1_ref.png").convert("RGB")
+    r, _, b = out.getpixel((out.size[0] // 2, out.size[1] // 2))
+    assert r > b, f"expected red (NOVA first-listed), got rgb=({r},_,{b})"
+
+
+@_with_env
+def test_wide_shot_overrides_primary_character(env):
+    """Wide/establishing shots pick location ref even when primary_character is set."""
+    char_src = env.make_src("char.png", 600, 600, colour=(255, 0, 0))
+    loc_src = env.make_src("loc.png", 600, 600, colour=(0, 255, 0))
+    env.write_enriched(
+        "p1",
+        shot_hint="wide establishing shot",
+        characters=[_char("NOVA", [char_src])],
+        loc_reference_images=[str(loc_src)],
+        primary_character="NOVA",
+    )
+    prepare_references(env.project)
+
+    out = Image.open(env.project.refs_prepared_dir / "p1_ref.png").convert("RGB")
+    r, g, _ = out.getpixel((out.size[0] // 2, out.size[1] // 2))
+    assert g > r, f"expected green (location), got rgb=({r},{g},_)"
+
+
+# ---------------------------------------------------------------------------
 # Supporting refs
 # ---------------------------------------------------------------------------
 
@@ -383,6 +457,63 @@ def test_primary_not_duplicated_in_supporting(env):
 
     # Only the primary; no supporting since the loc ref is the same file.
     assert [f.name for f in result["p1"]] == ["p1_ref.png"]
+
+
+# ---------------------------------------------------------------------------
+# Supporting refs — inpaint_order awareness
+# ---------------------------------------------------------------------------
+
+
+@_with_env
+def test_supporting_ordered_by_inpaint_order(env):
+    """Character refs in supporting list follow inpaint_order, not chars: order."""
+    nova_src = env.make_src("nova.png", 600, 600, colour=(255, 0, 0))
+    rex_src = env.make_src("rex.png", 600, 600, colour=(0, 0, 255))
+    ghost_src = env.make_src("ghost.png", 600, 600, colour=(0, 255, 0))
+    env.write_enriched(
+        "p1",
+        characters=[
+            _char("NOVA", [nova_src]),
+            _char("REX", [rex_src]),
+            _char("GHOST", [ghost_src]),
+        ],
+        primary_character="NOVA",
+        inpaint_order=["NOVA", "GHOST", "REX"],
+    )
+    result = prepare_references(env.project)
+
+    # Primary is NOVA. Supporting should be GHOST then REX (inpaint_order
+    # minus primary), not the original chars: order (REX, GHOST).
+    files = [f.name for f in result["p1"]]
+    assert files == ["p1_ref.png", "p1_ref_1.png", "p1_ref_2.png"]
+
+    # Verify by colour: ref_1 should be green (GHOST), ref_2 blue (REX).
+    ref1 = Image.open(env.project.refs_prepared_dir / "p1_ref_1.png").convert("RGB")
+    _, g1, _ = ref1.getpixel((ref1.size[0] // 2, ref1.size[1] // 2))
+    ref2 = Image.open(env.project.refs_prepared_dir / "p1_ref_2.png").convert("RGB")
+    _, _, b2 = ref2.getpixel((ref2.size[0] // 2, ref2.size[1] // 2))
+    assert g1 > 200, f"expected green (GHOST) for ref_1, got g={g1}"
+    assert b2 > 200, f"expected blue (REX) for ref_2, got b={b2}"
+
+
+@_with_env
+def test_supporting_fallback_order_without_inpaint_order(env):
+    """Without inpaint_order, supporting refs use original chars: list order."""
+    a_src = env.make_src("a.png", 600, 600, colour=(255, 0, 0))
+    b_src = env.make_src("b.png", 600, 600, colour=(0, 0, 255))
+    loc_src = env.make_src("loc.png", 600, 600, colour=(0, 255, 0))
+    env.write_enriched(
+        "p1",
+        characters=[_char("A", [a_src]), _char("B", [b_src])],
+        loc_reference_images=[str(loc_src)],
+        # No inpaint_order — backward compat
+    )
+    result = prepare_references(env.project)
+
+    # Primary is A (first char, no primary_character set).
+    # Supporting: loc first, then B (chars order, A excluded as primary).
+    files = [f.name for f in result["p1"]]
+    assert files == ["p1_ref.png", "p1_ref_1.png", "p1_ref_2.png"]
 
 
 # ---------------------------------------------------------------------------
