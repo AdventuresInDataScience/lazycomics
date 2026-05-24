@@ -402,3 +402,23 @@ the moment Phase 2 lands.
 SAM (Segment Anything) + depth ControlNet + diffusers inpaint pipeline.
 The model weights are large (~2.5GB for SAM alone). Lazy-import per
 principle #9; do not import at package top.
+
+## Phase 2 Complete but...
+### errors noted:
+1. The art style is inconsistent. I have a style reference image, and all characters and location reference images match this style too. But for some reason the images drift in style, quite significantly.
+2. Ditto the above with characters
+3. Ocasionally, a panel generates that looks almost like 2 disjointed images on 1 panel (likely inpaint failure).
+4. The text boxes are in wierd places, often with very long tails, and look wrong despite attempts to use a bounding box model to solve 
+5. Text in text boxes and bubbles is too small 
+6. With multiple bits of dialogue, the boxes often render in the wrong reading order, wrong speaker and/or overlapping. 
+
+### Some ideas I have to causes/solutions: 
+FLUX Dev instead of Klein
+Lower CFG
+Lower inpaint denoise (0.15–0.35)
+Smaller masks and specific bubble logic to handle both character order, tail placement, and negative space in the image in a suitable place for future speach bubbles.Eg using rt-detrv2 or SAM.
+Stronger style image weighting?
+Per-scene seed reuse
+Explicit bubble optimisation layer
+Fixed minimum font size
+Generate all characters in one pass where possible

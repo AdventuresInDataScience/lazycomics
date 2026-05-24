@@ -26,10 +26,21 @@ assembly:
   bg_color: "#ffffff"
 
   # Relative aspect drift allowed before switching from stretch to
-  # cover-crop when fitting a panel image to its slot. 0.0 means always
-  # cover-crop unless the panel already matches the slot exactly.
-  # 0.05 would allow 5% drift before cropping kicks in.
+  # the configured fit_mode when fitting a panel to its slot. 0.0 means
+  # always use fit_mode unless the panel already matches the slot exactly.
+  # 0.05 would allow 5% drift before non-stretch kicks in.
   stretch_tolerance: 0.0
+
+  # How to fit a panel into its slot when aspects differ. Options:
+  #   contain — scale to fit inside the slot, letterbox-pad with
+  #             bg_color. Preserves all content including edge text
+  #             overlays (captions, SFX, bubbles).
+  #   cover   — scale to fill the slot, centre-crop the overflow.
+  #             Fills the slot edge-to-edge but trims text at panel
+  #             edges. Use only when panels carry no edge content.
+  #   stretch — resize without preserving aspect. Distorts faces;
+  #             only safe when panels are authored at the slot aspect.
+  fit_mode: contain
 
 
 # ---------------------------------------------------------------------------
@@ -78,8 +89,9 @@ wan2gp:
   # Default denoising steps (Klein 9B uses 4 by default).
   default_steps: 4
 
-  # Guidance scale.
-  guidance_scale: 5
+  # Guidance scale. Klein's sweet spot is 3-4; higher values push the
+  # model away from the reference images.
+  guidance_scale: 3.5
 
   # video_prompt_type: "KI" for Klein Image generation.
   video_prompt_type: KI
@@ -88,8 +100,10 @@ wan2gp:
   # aspect ratio and snapped to nearest 64.
   base_resolution: 1024
 
-  # Fixed seed for reproducibility. null = random per panel.
-  seed: null
+  # Fixed seed for reproducibility. null = random per panel; an integer
+  # locks all panels to the same seed which dramatically improves
+  # character/style consistency when combined with consistent refs.
+  seed: 42
 
   # Extra CLI flags passed to wgp.py (e.g. ["--attention", "sdpa"]).
   cli_args: []
@@ -99,8 +113,10 @@ wan2gp:
   # lazycomics are auto-copied here so the headless CLI can find them.
   loras_dir: null
 
-  # Inpaint settings (multi-character panels)
-  inpaint_denoising: 1.0        # denoising_strength for inpaint passes
+  # Inpaint settings (multi-character panels).
+  # denoising 0.6-0.75 paints a new character while preserving background;
+  # 1.0 fully regenerates the masked area (produces "disjointed" panels).
+  inpaint_denoising: 0.65       # denoising_strength for inpaint passes
   inpaint_masking_strength: 0.3  # edge blending for inpaint mask
   inpaint_mask_expand: 0         # pixel expansion of mask boundary
 

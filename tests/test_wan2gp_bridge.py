@@ -563,10 +563,10 @@ def test_inpaint_task_fields():
     )
     assert task["image_mode"] == 2
     assert task["video_prompt_type"] == "VAG"
-    assert task["denoising_strength"] == 1.0
+    assert task["denoising_strength"] == 0.65
     assert task["masking_strength"] == 0.3
-    assert task["image_start"] == "/img/panel.png"
-    assert task["image_end"] == "/img/mask.png"
+    assert Path(task["image_start"]) == Path("/img/panel.png")
+    assert Path(task["image_end"]) == Path("/img/mask.png")
 
 
 def test_inpaint_task_with_loras():

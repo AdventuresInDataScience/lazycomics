@@ -833,3 +833,422 @@ Future exception:
 text_renderer.py has the weakest pipeline dependencies and could be extracted
 if it proves broadly useful outside this project. A v2 decision to be made with
 real usage data, not a speculative v1 architecture choice.
+
+---
+
+## 14. Phase 3 — Generation Quality & Polish
+
+**Status:** Planned. End-to-end test on 2026-05-24 surfaced six classes of
+issue (see `Current_status_of_implementation_plan.md` § "Phase 2 Complete
+but…"). A first wave of low-risk patches has already landed
+([§ 14.0](#140-pre-phase-3-patches-landed-2026-05-24)). Phase 3 tackles the
+remaining structural fixes.
+
+**Priority order** (run top to bottom; later items often depend on earlier ones):
+
+1. § 14.1 Wan2GP aspect-ratio bug — quick investigation, eliminates letterboxing
+2. § 14.2 Comic/anime-tuned face detector — unblocks 14.3 and 14.4
+3. § 14.3 Single-pass multi-character when LoRA-free
+4. § 14.4 Character-shaped inpaint masks + face-based speaker assignment (coupled)
+5. § 14.5 Bubble non-overlap pass + reading-order indicators
+6. § 14.6 LoRA training pipeline (`ai_toolkit_bridge.py`)
+7. § 14.7 SAM-based segmentation (investment, only if 14.4 falls short)
+
+Each subsection lists ordered steps. Cross-references use `§ N.M` form so this
+section can stand alone when handing off.
+
+---
+
+### 14.0 Pre-phase-3 patches landed (2026-05-24)
+
+Context for everything below. These shipped under commit(s) following the e2e
+test, before Phase 3 proper began:
+
+| Area | Change |
+|---|---|
+| Config | `guidance_scale` 5 → 3.5; `inpaint_denoising` 1.0 → 0.65; `seed: null` → 42 (deterministic across panels) |
+| ref_preparer | Style refs prepended to supporting list (was appended last; previously buried at `image_refs[3+]`) |
+| text_renderer | Dialogue/caption font `W/40` → `W/28`, floor 22 |
+| text_renderer | Tail length capped to 25% of panel diagonal (was unbounded) |
+| text_renderer | Bubble x anchored to detected face centre (clamped within region); was left-aligned |
+| text_renderer | Dialogue rendered in CBML order with per-speaker `y_cursor` state (was grouped by speaker, losing reading flow) |
+| text_renderer | Rewired to use the existing **hybrid YuNet + MediaPipe** detector in `face_detector.py` (was inadvertently still on MediaPipe-only — a recovery-commit regression after `git filter-repo`). YuNet catches the medium-distance / multi-character / stylised cases MediaPipe misses; MediaPipe handles the giant-closeup cases YuNet misses. Together they nail most generated panels. |
+| ref_preparer | Same rewire — was also still on MediaPipe-only for primary-ref face-aware cropping. |
+| text_renderer | Fallback tail target points at region's lower/upper-centre when no face detected (within-region only, not whole-panel) |
+| assembler | New `assembly.fit_mode` knob (`contain` default, `cover`, `stretch`); contain letterboxes panels so edge text overlays survive |
+
+---
+
+### 14.1 Wan2GP aspect-ratio bug
+
+**Symptom.** The bridge computes a portrait resolution (e.g. `704x1024`) from
+`panel.aspect_ratio` and passes it as `resolution: "WxH"` in the queue task.
+Generated panel PNGs come out 848×848 (square) anyway. Downstream the
+assembler letterboxes the square panels into portrait slots — correct
+behaviour, but ugly white bands.
+
+**Root cause (user-confirmed, 2026-05-24).** Klein/Kontext uses the
+`image_start` reference image's aspect as the *output* aspect, overriding
+the `resolution` field. This was a known issue and **had a prior fix that
+was lost in the git filter-repo / "Recovery from catastrophic failure"
+commit** (e0ed274). The fix was to **outpaint or pad the primary
+reference image** so its dimensions exactly equal the requested output
+resolution, forcing Klein to honour the target aspect.
+
+**Current code state** (the regression).
+[`ref_preparer.py:142`](src/lazycomics/ref_preparer.py#L142) calls
+`_crop_to_aspect(img, target_aspect)` on the primary ref — this *crops*
+the source down to the target aspect (losing content), then
+`_resize_long_edge` scales the long edge to `working_resolution` (1024).
+That produces an image with the right aspect ratio but **not** the exact
+target pixel dimensions Klein needs. The lost fix presumably *padded* or
+*outpainted* instead of cropping, producing an image with exact target
+dimensions.
+
+**Steps.**
+
+1. **Reconstruct the prior fix.** In `ref_preparer._prepare_one`, replace
+   (or supplement) the crop-to-aspect step with a *pad-to-aspect* step:
+   compute target `(W, H)` from `panel.aspect_ratio` × `working_resolution`,
+   then create a `(W, H)` canvas filled with a neutral colour (or replicate
+   edge pixels), and paste the source ref centred inside it. Result: ref
+   has *exactly* the resolution Klein will be asked to output.
+2. Variant: AI outpaint (using a small img-to-img pass on the ref before
+   generation). Higher quality but introduces a dependency. The padded
+   version is the cheap fix; outpaint is the polished version.
+3. Add a debug-print line in the bridge that compares
+   `(image_start_w, image_start_h)` to `resolution` and warns when they
+   differ. Catches future regressions immediately.
+4. Add a `_collect_outputs` assertion: warn loudly when an output panel's
+   dimensions diverge from the requested resolution by > 5%.
+5. Add a `ref_preparer` test that asserts the primary ref dimensions
+   exactly match the target panel resolution after preparation.
+6. Verify on a real run: panels should come out at the requested
+   resolution (e.g. 704×1024 for portrait).
+
+**Notes for whoever picks this up.**
+
+* The 848×848 number is suspicious — it's not the `base_resolution: 1024`
+  default, nor the source character refs' 600×600 dims, nor any obvious
+  Klein default. Investigate whether Wan2GP itself is applying a
+  resolution snap (multiples of 16/32/64) that produces 848 from some
+  upstream parameter, OR whether Klein has a hardcoded canonical size.
+* The previous fix was almost certainly in `ref_preparer.py`, not the
+  bridge. The bridge's job is just to pass `image_start` along.
+* When the fix lands, § 14.0's `assembly.fit_mode: contain` default
+  should be reverted to `cover` — see § 14.9.
+
+**Done when.** Generated panel dimensions match the requested resolution
+within 5%; assembled pages show no letterbox bands.
+
+---
+
+### 14.2 Face detection — fill the remaining gap
+
+**Background.** A complete hybrid detector
+(`src/lazycomics/face_detector.py`) already exists — YuNet (OpenCV's
+lightweight ONNX detector) as primary plus MediaPipe as fallback, with
+IoU-based dedup. The bundled ONNX model is at
+`src/lazycomics/assets/models/face_detection_yunet_2023mar.onnx`. The
+wiring bug fixed in § 14.0 closed the biggest gap (~20% → ~75% recall on
+the e2e panels).
+
+**Remaining symptom.** Heavy-linework closeups (e.g. a grizzled face with
+strong cross-hatching, panels lit only by warm rim light) still slip past
+both detectors. ~1 in 4 panels in the e2e sample.
+
+**Steps** (only if § 14.0 wiring isn't enough in practice):
+
+1. Build a small evaluation harness: take 20+ generated panels, hand-label
+   face boxes, measure recall and FP rate for the current hybrid stack.
+2. Tune existing knobs first — lower `_YUNET_SCORE_THRESH` from 0.5 to
+   0.3, drop `_MEDIAPIPE_MIN_CONF` to 0.3, switch MediaPipe to
+   `model_selection=1` (full-range). Re-measure.
+3. If still under target, evaluate a third detector specifically tuned
+   for anime/manga (`anime-face-detector`, YOLOv5-anime). Add as an
+   optional dep and slot it into the strategy stack ahead of YuNet.
+4. Persist detected face boxes to `<project>/enriched/<panel_id>.json`
+   under a new `detected_faces` field so downstream stages (§ 14.4) can
+   consume them without re-detecting on every text render.
+
+**Done when.** Recall on a 20-panel benchmark ≥ 90%; bubble tails point
+at faces on essentially every multi-character panel.
+
+---
+
+### 14.3 Single-pass multi-character when LoRA-free
+
+**Symptom.** Current bridge routes any panel with 2+ characters through
+`_run_multi_inpaint`, which runs a base pass plus one inpaint per non-primary
+character. With rectangular masks and aggressive denoising this produces
+"two disjointed images" panels (§ "Phase 2 Complete but…" issue 3).
+
+**Insight.** When no character has a per-character LoRA, the inpaint pass
+isn't doing anything the base prompt couldn't do — both characters can be
+generated together with a single prompt naming both. Skipping the inpaint
+path entirely sidesteps the failure mode.
+
+**Steps.**
+
+1. In `enricher.py`, when computing `char_generation_strategy`, downgrade
+   `"multi_inpaint"` to `"single"` if **none** of the characters has a
+   `lora` field set in the asset registry. Add an `enricher` config knob
+   (`enricher.single_pass_when_lora_free: true` default) so the heuristic
+   can be disabled for testing.
+2. Update `prompt_builder.py` to emit a multi-character base prompt
+   when strategy is `"single"` and `len(chars) > 1`. The prompt should
+   name all characters and use their `visual_description` fields.
+3. No bridge changes needed — the strategy field already routes single
+   panels to the batch path.
+4. Add an enricher test asserting the strategy downgrade fires when all
+   chars are LoRA-free and stays `"multi_inpaint"` when any char has a LoRA.
+5. Run a side-by-side: generate the same multi-char panel with strategy
+   forced to `"single"` and `"multi_inpaint"`. Visual review.
+
+**Done when.** Two-character panels with no per-character LoRA render in one
+pass without the disjointed-image artifact.
+
+---
+
+### 14.4 Character-shaped masks + face-based speaker assignment
+
+**Coupled.** Both rely on detected face locations on the *generated* panel
+(not the predicted `bubble_layout`). § 14.2 must land first.
+
+#### 14.4a Character-shaped inpaint masks
+
+**Symptom.** `_get_character_region` in `wan2gp_bridge.py` builds masks as
+full-height vertical stripes. With high denoise this regenerates the entire
+slab, including background, producing disjointed panels.
+
+**Steps.**
+
+1. After the base pass in `_run_multi_inpaint`, run face detection on the
+   generated panel (using § 14.2's detector).
+2. For each detected face, expand the bbox by `mask_padding_px` (config
+   knob, default ~80px) horizontally and ~3× vertically to cover chest +
+   head + shoulders.
+3. Sort faces by x-coordinate; map to characters in `inpaint_order` by
+   index (after primary character is removed).
+4. For each inpaint pass, generate a mask containing only that character's
+   expanded box — not a full-height stripe.
+5. If face detection fails for a panel, fall back to the current
+   bubble_layout-derived stripe (so we never block on bad detection).
+6. Lower `inpaint_denoising` further to 0.5 for this path (mask is now
+   tight, so we want to preserve as much of the surrounding base pass as
+   possible).
+7. Add `wan2gp.mask_padding_px` to `lazycomics_config.yaml` and the bridge
+   fallback table.
+
+**Done when.** Multi-character panels show two distinct characters embedded
+in a coherent shared background — no visible seam, no two-image artifact.
+
+#### 14.4b Face-based speaker assignment
+
+**Symptom.** `_select_speaker_face` in `text_renderer.py` trusts the
+predicted `bubble_layout` regions. When the painted character lands outside
+their predicted region (e.g. because the inpaint mask was loose), the wrong
+face is paired with their dialogue.
+
+**Steps.**
+
+1. Read `detected_faces` from enriched JSON (written in § 14.2 step 4).
+2. If `len(detected_faces) == len(speaker_order)`: sort faces by x-coord
+   (Western reading order) and assign 1:1 to speakers in their CBML
+   appearance order.
+3. If counts mismatch: keep the existing region-based heuristic.
+4. Write the per-speaker assigned face to a new `actual_character_regions`
+   field in enriched JSON so future stages can consume it.
+5. Update `text_renderer._render_dialogue` to prefer `actual_character_regions`
+   over predicted `bubble_layout` when available — the TODO comment at the
+   top of `_render_dialogue` already names this.
+
+**Done when.** Bubble tails reliably point at the right character in
+multi-character panels.
+
+---
+
+### 14.5 Bubble non-overlap pass + reading-order indicators
+
+**Symptom.** With multiple speakers in tightly-packed regions, bubbles can
+collide near region boundaries. The CBML-order fix from § 14.0 helps but
+doesn't guarantee non-overlap when regions are adjacent.
+
+**Steps.**
+
+1. In `text_renderer._render_dialogue`, maintain a running list of placed
+   bubble rectangles across all speakers.
+2. After computing each new bubble's `(bubble_x, bubble_y, bubble_w, bubble_h)`,
+   test it against the placed list.
+3. On collision: shift the new bubble along the stack axis (down for
+   `place_top`, up for `place_bottom`) by `bubble_h + 10` until clear.
+4. If the shift would push the bubble outside the panel, shrink
+   `max_bubble_width` by 15% and re-wrap the text; retry up to twice.
+5. After two retries: render the bubble at its first-attempted position
+   and log a warning naming the panel.
+6. **Reading-order indicators.** When ≥ 3 bubbles exist in the same panel,
+   draw a small "1", "2", "3" badge in the bubble's outer-edge corner.
+   New config: `text_renderer.numbered_when_3plus: true`.
+
+**Done when.** No visible bubble overlaps in a 20-panel sample; reading
+order is unambiguous in dense panels.
+
+---
+
+### 14.6 LoRA training pipeline (carried from Phase 2)
+
+**Symptom.** § 11.7 character drift across panels. The proper fix is
+per-character LoRAs trained on the user's reference images.
+
+**Steps.**
+
+1. Add `src/lazycomics/ai_toolkit_bridge.py` mirroring the
+   `wan2gp_bridge.py` pattern (Pinokio-managed subprocess, headless CLI).
+2. Public API: `train_character_lora(project, character_id, *, config) -> Path`
+   returning the path to the trained `.safetensors`.
+3. Read `chars/<character_id>/reference_images/` for training data.
+4. Build an AI Toolkit config (per AI Toolkit's `config.yaml` spec) with the
+   character's name as the trigger word.
+5. Shell out to AI Toolkit's training script in the Pinokio env.
+6. On success, call `asset_registry.set_lora(project, character_id, lora_path,
+   weight, trigger_word)`.
+7. Cache: skip training when a LoRA already exists at the expected path
+   unless `force=True`.
+8. Add a CLI subcommand: `lazycomics train-lora <project> <character_id>`.
+9. Add config section `ai_toolkit:` in `lazycomics_config.yaml`
+   (paths to AI Toolkit install, Python env, default training params).
+10. Document training time expectations (typically 30-90 min per character).
+
+**Done when.** A character with a trained LoRA looks visually consistent
+across all panels they appear in. Side-by-side test: same character before
+and after LoRA training.
+
+---
+
+### 14.7 SAM-based segmentation (investment workstream)
+
+**Why this is last.** Big payoff but big effort. Only attempt if § 14.4 isn't
+enough.
+
+**Steps.**
+
+1. Add SAM (Segment Anything) as an optional dependency. Choose between
+   SAM 1 (smaller, faster) and SAM 2 (better quality, larger).
+2. After the base pass, run SAM on the generated panel using detected face
+   locations as seed points.
+3. Use the resulting segmentation masks as inpaint masks (replaces the
+   bounded-box approach in § 14.4a — tighter, follows character silhouette).
+4. Negative-space analysis: compute connected components in the
+   non-character region. Score each component by area and "distance from
+   any character face". Use highest-scoring components as bubble placement
+   targets — bubbles get placed in genuine empty regions of the art rather
+   than over the character or sky.
+5. New text_renderer code path: `placement_strategy: "sam_negative_space"`
+   with `"bubble_layout"` as fallback.
+
+**Done when.** Bubbles land in artwork dead space; inpaint regions follow
+character silhouettes; visible "seam" artifacts vanish entirely.
+
+---
+
+### 14.8 Bubble placement — further issues after 14.0 patches (2026-05-24)
+
+After the § 14.0 patches landed, a second visual inspection surfaced four
+*additional* bubble-placement issues to fix in Phase 3. Logged here so they
+don't get lost when the patch-list gets long.
+
+#### 14.8a Place-above-when-face-is-high heuristic
+
+**Symptom.** On `page_001` (NOVA splash), bubble was placed *below* her —
+above would have made more sense visually. Cause: current logic in
+`_render_dialogue` is "bubble opposite side of face" — face high in
+region → bubble at bottom. But when the face is in the *top third*,
+there's usually enough headroom above for the bubble too, and convention
+puts dialogue above the speaker.
+
+**Fix.** Try `place_top=True` first when face is in the top third; fall
+back to bottom only if the bubble wouldn't fit in the headroom above.
+
+#### 14.8b Reading-order vs face-position conflict
+
+**Symptom.** On `page_2_panel_1` (NOVA-then-REX dialogue), NOVA speaks
+first in CBML but her bubble landed at *bottom-left* and REX's at
+*top-right*. Western reading order is top-left → top-right → bottom-left
+→ bottom-right, so the reader hits REX's reply before NOVA's setup.
+
+**Fix.** When there are 2+ speakers in a panel, weight the placement
+decision toward CBML order: the earlier speaker's bubble should land in a
+position that's read first (upper-left for Western, upper-right for
+manga). Each speaker's individual face anchoring still applies *within*
+the chosen quadrant.
+
+#### 14.8c Face detection still missing some panels
+
+**Symptom.** Even with YuNet + MediaPipe hybrid, some heavily-stylised
+closeups (e.g. `page_2_panel_2` — grizzled face with strong line-art) yield
+zero detections. Bubble then has no tail.
+
+**Fix.** Already tracked in [§ 14.2](#142-face-detection--fill-the-remaining-gap).
+Pull that work forward in priority.
+
+#### 14.8d Tail length cap is still too generous
+
+**Symptom.** On `page_001`, the speech-bubble tail visibly traverses
+most of the panel even with the 25%-of-diagonal cap added in § 14.0.
+
+**Fix.** Tighten the cap to **15% of panel diagonal** (was 25%). Also
+add a *minimum* — under 12px, just draw a small triangle stub flush
+with the bubble rather than a vanishing thin sliver.
+
+---
+
+### 14.9 Open question — letterbox default (raised 2026-05-24)
+
+**Decision needed.** § 14.0 changed `assembly.fit_mode` default from
+`cover` (crop overflow) to `contain` (letterbox with bg padding) to stop
+edge-aligned text overlays getting clipped on the assembled page. User
+flagged that this *wasn't a discussed change* and may regress an earlier
+deliberate decision in favour of cover-crop.
+
+**Why the change was made.** With `cover` the assembled page clipped
+caption boxes and SFX text that the renderer places at the panel margin
+(20px from each edge). With `contain` the panels are letterboxed (white
+bands appear when panel aspect ≠ slot aspect).
+
+**Root cause is actually § 14.1.** The choice between cover-crop and
+letterbox only matters because Wan2GP is producing 848×848 panels when
+the bridge asks for 704×1024. Fix § 14.1 (Wan2GP aspect-ratio bug) and
+panel dims will match slot dims — both modes give identical output, and
+the letterbox bands disappear.
+
+**Recommended sequence:**
+
+1. Fix § 14.1 first — eliminates the source of the cover-vs-contain
+   dilemma.
+2. Revisit the default *after* § 14.1: with panels at the requested
+   aspect, default back to `cover` (safer when the renderer's
+   edge-anchored text happens to land at the very perimeter of a
+   resized panel; cover-crop pulls in slightly and hides nothing
+   important).
+3. Keep the `fit_mode` knob — it's useful for the cases where panels
+   *can't* be regenerated (hand-edited overrides, third-party panels).
+
+**Until § 14.1 lands**, the user may want to revert the default to
+`cover`. The knob makes that a one-line YAML edit; no code change
+needed.
+
+---
+
+### Phase 3 exit criteria
+
+* Generated panels match requested aspect ratio (§ 14.1).
+* Face detection recall ≥ 80% on stylised art (§ 14.2).
+* Multi-character panels render without the disjointed-image artifact
+  (§ 14.3 + § 14.4a).
+* Bubble tails point at the correct speaker on ≥ 90% of multi-character
+  panels (§ 14.4b).
+* No visible bubble overlaps in a 20-panel review (§ 14.5).
+* At least one trained character LoRA improves visible consistency in a
+  side-by-side comparison (§ 14.6).
+* The original six issues from "Phase 2 Complete but…" are addressed or
+  explicitly deferred with a documented reason.

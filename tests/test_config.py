@@ -174,6 +174,7 @@ _EXPECTED_KEYS = [
     "assembly.gutter_px",
     "assembly.bg_color",
     "assembly.stretch_tolerance",
+    "assembly.fit_mode",
     # llm_refiner.py
     "llm.url",
     "llm.model",
@@ -222,3 +223,4 @@ def test_repo_config_assembly_defaults_match_module_defaults():
     assert cfg_get(cfg, "assembly.gutter_px") == assembler._DEFAULT_GUTTER_PX
     assert cfg_get(cfg, "assembly.bg_color") == assembler._DEFAULT_BG_COLOR
     assert cfg_get(cfg, "assembly.stretch_tolerance") == assembler._DEFAULT_STRETCH_TOLERANCE
+    assert cfg_get(cfg, "assembly.fit_mode") == assembler._DEFAULT_FIT_MODE

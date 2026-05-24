@@ -47,10 +47,9 @@ import platform
 from pathlib import Path
 from typing import Any
 
-import mediapipe as mp
-import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from lazycomics import face_detector
 from lazycomics.models import Project
 
 __all__ = ["render_text"]
@@ -159,7 +158,7 @@ def _render_captions(img: Image.Image, captions: list[dict[str, Any]]) -> Image.
         return img
     draw = ImageDraw.Draw(img)
     W, H = img.size
-    font = _load_font(size=max(14, W // 40))
+    font = _load_font(size=max(22, W // 28))
     margin = 20
     padding = 10
     max_text_width = max(20, int(W * 0.4) - 2 * padding)
@@ -233,6 +232,16 @@ def _render_dialogue(
 ) -> Image.Image:
     """Place bubbles in their speaker's ``bubble_layout`` region.
 
+    Bubbles are placed in CBML order so reading flow matches the script,
+    even when speakers alternate (A->B->A renders as three sequential
+    bubbles, not "A stack then B stack"). Per-speaker state tracks the
+    next y_cursor inside that speaker's region so consecutive lines from
+    the same speaker stack naturally.
+
+    Each bubble's x position is anchored to its speaker's detected face
+    (clamped within the region) when a face is found, so the tail is a
+    short stub rather than a long diagonal traversing the panel.
+
     TODO (Phase 2): when ``inpaint_manager`` writes actual painted
     character regions to the panel JSON (proposed field
     ``actual_character_regions``), prefer them over the predicted
@@ -245,84 +254,110 @@ def _render_dialogue(
 
     draw = ImageDraw.Draw(img)
     W, H = img.size
-    font = _load_font(size=max(14, W // 40))
+    font = _load_font(size=max(22, W // 28))
     margin = 20
     padding = 12
 
     faces = _detect_all_faces(img)
 
-    # Group dialogue by speaker, preserving the order of first appearance.
-    speaker_lines: dict[str, list[dict[str, Any]]] = {}
+    # Speaker order = order of first mention in CBML.
     speaker_order: list[str] = []
     for line in dialogue:
         speaker = (line.get("character") or "").strip()
-        if speaker not in speaker_lines:
-            speaker_lines[speaker] = []
+        if speaker and speaker not in speaker_order:
             speaker_order.append(speaker)
-        speaker_lines[speaker].append(line)
 
     # Build a {speaker: (x, y, w, h)} pixel-rect map from bubble_layout,
-    # auto-splitting the panel for any speakers without a declared region
-    # (older enriched JSON or a mismatch between dialogue and bubble_layout).
+    # auto-splitting the panel for any speakers without a declared region.
     region_by_speaker = _pixel_regions(bubble_layout, W, H)
     _fill_missing_regions(region_by_speaker, speaker_order, W, H)
 
+    # Initialise per-speaker placement state. y_cursor advances as bubbles
+    # are placed; place_top decides whether stacks grow downward (face is
+    # below) or upward (face is above).
+    state_by_speaker: dict[str, dict[str, Any]] = {}
     for speaker in speaker_order:
         region = region_by_speaker.get(speaker, (0, 0, W, H))
         rx, ry, rw, rh = region
-
-        # Per-region bubble width cap (don't exceed the region).
-        max_bubble_width = min(int(W * 0.45), max(40, rw - 2 * margin))
-
         target_face = _select_speaker_face(faces, region, len(region_by_speaker))
-
-        # Top-or-bottom within region, away from the face if we found one.
         if target_face is not None:
             face_cy = (target_face[1] + target_face[3]) // 2
             place_top = face_cy > (ry + rh // 2)
         else:
             place_top = True
+        state_by_speaker[speaker] = {
+            "region": region,
+            "face": target_face,
+            "place_top": place_top,
+            "y_cursor": ry + margin if place_top else ry + rh - margin,
+        }
 
-        bubble_x = rx + margin
-        y_cursor = ry + margin if place_top else ry + rh - margin
+    for line in dialogue:
+        speaker = (line.get("character") or "").strip()
+        text = (line.get("text") or "").strip()
+        if not text or speaker not in state_by_speaker:
+            continue
+        bubble_type = line.get("bubble_type") or "speech"
+        state = state_by_speaker[speaker]
+        rx, ry, rw, rh = state["region"]
+        target_face = state["face"]
 
-        for line in speaker_lines[speaker]:
-            text = (line.get("text") or "").strip()
-            if not text:
-                continue
-            bubble_type = line.get("bubble_type") or "speech"
+        max_bubble_width = min(int(W * 0.45), max(40, rw - 2 * margin))
 
-            wrapped = _wrap_text(text, font, max_bubble_width - 2 * padding, draw)
-            line_sizes = [_measure(draw, l, font) for l in wrapped]
-            text_w = max(w for w, _ in line_sizes)
-            text_h = sum(h for _, h in line_sizes)
+        wrapped = _wrap_text(text, font, max_bubble_width - 2 * padding, draw)
+        line_sizes = [_measure(draw, l, font) for l in wrapped]
+        text_w = max(w for w, _ in line_sizes)
+        text_h = sum(h for _, h in line_sizes)
 
-            bubble_w = text_w + 2 * padding
-            bubble_h = text_h + 2 * padding
+        bubble_w = text_w + 2 * padding
+        bubble_h = text_h + 2 * padding
 
-            if place_top:
-                bubble_y = y_cursor
-                y_cursor = bubble_y + bubble_h + 10
-            else:
-                bubble_y = y_cursor - bubble_h
-                y_cursor = bubble_y - 10
+        # x anchored to face center when known (keeps tail short); else
+        # left-aligned within the region (Phase 1 fallback).
+        if target_face is not None:
+            face_cx = (target_face[0] + target_face[2]) // 2
+            bubble_x = max(rx + margin,
+                           min(rx + rw - margin - bubble_w,
+                               face_cx - bubble_w // 2))
+        else:
+            bubble_x = rx + margin
 
-            _draw_bubble(draw, bubble_x, bubble_y, bubble_w, bubble_h, bubble_type)
+        if state["place_top"]:
+            bubble_y = state["y_cursor"]
+            state["y_cursor"] = bubble_y + bubble_h + 10
+        else:
+            bubble_y = state["y_cursor"] - bubble_h
+            state["y_cursor"] = bubble_y - 10
 
-            if target_face is not None:
-                tx = (target_face[0] + target_face[2]) // 2
-                ty = (target_face[1] + target_face[3]) // 2
-                _draw_tail(
-                    draw,
-                    (bubble_x, bubble_y, bubble_x + bubble_w, bubble_y + bubble_h),
-                    (tx, ty), bubble_type,
-                )
+        _draw_bubble(draw, bubble_x, bubble_y, bubble_w, bubble_h, bubble_type)
 
-            # Render the text last so it sits on top of bubble + tail fills.
-            y_text = bubble_y + padding
-            for l, (_, lh) in zip(wrapped, line_sizes):
-                draw.text((bubble_x + padding, y_text), l, fill="#000000", font=font)
-                y_text += lh
+        # Tail target: detected face when available; otherwise a sensible
+        # point inside the speaker's region (so we still get *some* tail
+        # — stylised comic faces often slip past MediaPipe but the
+        # speaker's region still tells us roughly where they stand).
+        # Skip the fallback when no region info is available (the whole
+        # panel is the region — pointing at panel center looks wrong).
+        if target_face is not None:
+            tx = (target_face[0] + target_face[2]) // 2
+            ty = (target_face[1] + target_face[3]) // 2
+        elif _region_is_narrower_than_panel((rx, ry, rw, rh), W):
+            tx = rx + rw // 2
+            ty = ry + (rh * 3 // 4) if state["place_top"] else ry + rh // 4
+        else:
+            tx = ty = None
+
+        if tx is not None:
+            _draw_tail(
+                draw,
+                (bubble_x, bubble_y, bubble_x + bubble_w, bubble_y + bubble_h),
+                (tx, ty), bubble_type, (W, H),
+            )
+
+        # Render the text last so it sits on top of bubble + tail fills.
+        y_text = bubble_y + padding
+        for l, (_, lh) in zip(wrapped, line_sizes):
+            draw.text((bubble_x + padding, y_text), l, fill="#000000", font=font)
+            y_text += lh
 
     return img
 
@@ -374,6 +409,22 @@ def _fill_missing_regions(
         # Last slice absorbs any rounding leftover so the total covers W.
         rw = W - i * slice_w if i == n - 1 else slice_w
         region_by_speaker[s] = (i * slice_w, 0, rw, H)
+
+
+def _region_is_narrower_than_panel(
+    region: tuple[int, int, int, int], panel_w: int,
+) -> bool:
+    """True when the speaker's region is a proper sub-rect of the panel.
+
+    The fallback tail target points at the region's lower/upper centre,
+    which only makes sense when that region is genuinely the speaker's
+    side of the panel. A region that spans the whole width (single
+    speaker, no bubble_layout) carries no positional information, so
+    pointing at the panel's centre would just produce a long misleading
+    tail — we suppress the tail instead.
+    """
+    _, _, rw, _ = region
+    return rw < panel_w * 0.85
 
 
 def _select_speaker_face(
@@ -536,12 +587,17 @@ def _draw_whisper(draw: ImageDraw.ImageDraw, x: int, y: int,
 def _draw_tail(draw: ImageDraw.ImageDraw,
                bubble_rect: tuple[int, int, int, int],
                target: tuple[int, int],
-               bubble_type: str) -> None:
+               bubble_type: str,
+               panel_size: tuple[int, int] | None = None) -> None:
     """Draw a tail/leader from ``bubble_rect`` toward ``target``.
 
     speech  -> triangular tail
     thought -> trailing dots (small circles between bubble and target)
     shout, whisper -> no tail (the shape itself carries the emphasis)
+
+    ``panel_size`` is used to cap tail length to a reasonable fraction
+    of the panel diagonal so a far-off face doesn't produce a giant
+    diagonal stripe traversing the panel.
     """
     if bubble_type in ("shout", "whisper"):
         return
@@ -557,6 +613,18 @@ def _draw_tail(draw: ImageDraw.ImageDraw,
     else:
         # Target horizontally alongside the bubble — no clean tail direction.
         return
+
+    # Cap tail length so it doesn't span the whole panel. Anything beyond
+    # ~25% of the panel diagonal looks like a leader line, not a tail.
+    if panel_size is not None:
+        max_tail = math.hypot(*panel_size) * 0.25
+        dx = tx - bcx
+        dy = ty - origin_y
+        distance = math.hypot(dx, dy)
+        if distance > max_tail and distance > 0:
+            scale = max_tail / distance
+            tx = int(bcx + dx * scale)
+            ty = int(origin_y + dy * scale)
 
     border = _BUBBLE_BORDER_WIDTH.get(bubble_type, 2)
 
@@ -675,30 +743,12 @@ def _is_dark(hex_color: str) -> bool:
 
 
 def _detect_all_faces(img: Image.Image) -> list[tuple[int, int, int, int]]:
-    """Return ``(x0, y0, x1, y1)`` for every face MediaPipe detects.
+    """Return ``(x0, y0, x1, y1)`` for every face on ``img``.
 
-    Empty list on no detections or on a detector error (logged loudly so
-    the user notices). Module-level for monkeypatching in tests.
+    Delegates to the hybrid YuNet + MediaPipe detector in
+    ``lazycomics.face_detector`` — empirically YuNet catches the
+    medium-distance stylised comic faces MediaPipe misses, and MediaPipe
+    catches the giant-closeup case YuNet misses. Module-level so tests
+    can monkeypatch.
     """
-    try:
-        detector = mp.solutions.face_detection.FaceDetection(min_detection_confidence=0.5)
-        arr = np.array(img.convert("RGB"))
-        results = detector.process(arr)
-    except Exception as e:
-        print(f"[text] face detection error: {e}")
-        return []
-
-    if not results.detections:
-        return []
-
-    w, h = img.size
-    out: list[tuple[int, int, int, int]] = []
-    for det in results.detections:
-        bbox = det.location_data.relative_bounding_box
-        x0 = max(0, int(bbox.xmin * w))
-        y0 = max(0, int(bbox.ymin * h))
-        x1 = min(w, int((bbox.xmin + bbox.width) * w))
-        y1 = min(h, int((bbox.ymin + bbox.height) * h))
-        if x1 > x0 and y1 > y0:
-            out.append((x0, y0, x1, y1))
-    return out
+    return [(f.x0, f.y0, f.x1, f.y1) for f in face_detector.detect_faces(img)]

@@ -310,8 +310,10 @@ def test_dialogue_avoids_face_in_top_half_of_panel(env):
     assert top_dark > 40, "expected dark panel background near top"
 
     # Near the bottom there should be a band of bubble-fill white pixels.
+    # The bubble's x position is now anchored to the face center (x=400),
+    # so scan a band around there rather than the panel's left edge.
     bottom_white = sum(
-        1 for x in range(35, 100)
+        1 for x in range(330, 470)
         if all(c > 240 for c in out.getpixel((x, 545)))
     )
     assert bottom_white > 40, f"expected white bubble fill near bottom, got {bottom_white} white px"
@@ -335,11 +337,13 @@ def test_two_lines_same_speaker_stack_vertically(env):
     out = Image.open(env.project.panels_text_dir / "p1.png").convert("RGB")
 
     # Both bubbles in NOVA's region (whole panel) — they stack vertically
-    # at the left edge. Scan a column near x=50, count distinct white runs.
+    # at the left edge. Scan a column inside the bubble's left padding
+    # (x=25; text starts at x=32 with padding=12) so the result is robust
+    # to font size changes.
     runs = 0
     in_run = False
     for y in range(15, 250):
-        r, g, b = out.getpixel((50, y))
+        r, g, b = out.getpixel((25, y))
         is_white = r >= 240 and g >= 240 and b >= 240
         if is_white and not in_run:
             runs += 1
@@ -349,7 +353,7 @@ def test_two_lines_same_speaker_stack_vertically(env):
     assert runs == 2, f"expected 2 stacked bubbles, found {runs} white runs"
 
     # Lower half should still be panel background.
-    r, g, b = out.getpixel((50, 400))
+    r, g, b = out.getpixel((25, 400))
     assert r < 80 and g < 80 and b < 80
 
 

@@ -41,10 +41,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-import mediapipe as mp
-import numpy as np
 from PIL import Image
 
+from lazycomics import face_detector
 from lazycomics.asset_registry import get_style
 from lazycomics.models import Project, StyleAsset
 
@@ -148,7 +147,10 @@ def _prepare_one(
     outputs = [primary_out]
 
     # Supporting: passthrough at native aspect, only resize.
-    supporting_sources = _collect_supporting(panel, primary_source) + [Path(p) for p in style_refs]
+    # Style refs go FIRST in the supporting list so they end up at
+    # image_refs[0] in the Wan2GP task — earlier positions get stronger
+    # conditioning weight than later ones in Klein/Kontext.
+    supporting_sources = [Path(p) for p in style_refs] + _collect_supporting(panel, primary_source)
     for idx, src in enumerate(supporting_sources, start=1):
         if not src.is_file():
             continue
@@ -305,31 +307,12 @@ def _resize_long_edge(img: Image.Image, target: int) -> Image.Image:
 def _detect_face_centre(img: Image.Image) -> tuple[int, int] | None:
     """Return ``(x, y)`` of the most-confident detected face, or ``None``.
 
-    Returns ``None`` when no face is detected — that's the correct
-    behaviour for non-face images (locations, objects) and the caller
-    then centre-crops. The narrow ``except Exception`` guards against
-    per-image runtime failures (corrupt JPEG, exotic colour mode, etc.);
-    the error is printed loudly so the user notices rather than
-    discovering a misaligned panel later. Module-level so tests can
-    monkeypatch.
+    Delegates to the hybrid YuNet + MediaPipe detector. Returns ``None``
+    when no face is detected — that's the correct behaviour for non-face
+    images (locations, objects) and the caller then centre-crops.
+    Module-level so tests can monkeypatch.
     """
-    try:
-        detector = mp.solutions.face_detection.FaceDetection(min_detection_confidence=0.5)
-        arr = np.array(img.convert("RGB"))
-        results = detector.process(arr)
-    except Exception as e:
-        print(f"[refs] face detection failed on a source image ({e}); using centre crop")
-        return None
-
-    if not results.detections:
-        return None
-
-    best = max(results.detections, key=lambda d: d.score[0])
-    bbox = best.location_data.relative_bounding_box
-    w, h = img.size
-    cx = int((bbox.xmin + bbox.width / 2) * w)
-    cy = int((bbox.ymin + bbox.height / 2) * h)
-    return cx, cy
+    return face_detector.detect_face_centre(img)
 
 
 # ---------------------------------------------------------------------------

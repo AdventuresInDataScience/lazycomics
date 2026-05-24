@@ -361,16 +361,16 @@ def _load_bridge_config(config: dict[str, Any]) -> dict[str, Any]:
         "python_bin": Path(python_bin).expanduser().resolve(),
         "architecture": cfg_get(config, "wan2gp.architecture", "flux2_klein_9b"),
         "default_steps": cfg_get(config, "wan2gp.default_steps", 4),
-        "guidance_scale": cfg_get(config, "wan2gp.guidance_scale", 5),
+        "guidance_scale": cfg_get(config, "wan2gp.guidance_scale", 3.5),
         "video_prompt_type": cfg_get(config, "wan2gp.video_prompt_type", "KI"),
         "base_resolution": cfg_get(config, "wan2gp.base_resolution", 1024),
-        "seed": cfg_get(config, "wan2gp.seed", None),
+        "seed": cfg_get(config, "wan2gp.seed", 42),
         "cli_args": cfg_get(config, "wan2gp.cli_args", []),
         "loras_dir": Path(
             cfg_get(config, "wan2gp.loras_dir", "")
             or str(Path(wgp_root).expanduser().resolve() / "loras")
         ).expanduser().resolve(),
-        "inpaint_denoising": cfg_get(config, "wan2gp.inpaint_denoising", 1.0),
+        "inpaint_denoising": cfg_get(config, "wan2gp.inpaint_denoising", 0.65),
         "inpaint_masking_strength": cfg_get(config, "wan2gp.inpaint_masking_strength", 0.3),
         "inpaint_mask_expand": cfg_get(config, "wan2gp.inpaint_mask_expand", 0),
     }

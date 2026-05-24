@@ -40,6 +40,8 @@ _DEFAULT_PAGE_HEIGHT_PX = 3000
 _DEFAULT_GUTTER_PX = 20
 _DEFAULT_BG_COLOR = "#ffffff"
 _DEFAULT_STRETCH_TOLERANCE = 0.0
+_DEFAULT_FIT_MODE = "contain"
+_VALID_FIT_MODES = ("contain", "cover", "stretch")
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +56,7 @@ def assemble_pages(
     gutter_px: int | None = None,
     bg_color: str | None = None,
     stretch_tolerance: float | None = None,
+    fit_mode: str | None = None,
     force: bool = False,
 ) -> dict[int, Path]:
     """Composite panels into per-page PNGs under ``<project>/pages/``.
@@ -70,6 +73,7 @@ def assemble_pages(
     gutter = _resolve(gutter_px, cfg, "assembly.gutter_px", _DEFAULT_GUTTER_PX)
     bg = _resolve(bg_color, cfg, "assembly.bg_color", _DEFAULT_BG_COLOR)
     tol = _resolve(stretch_tolerance, cfg, "assembly.stretch_tolerance", _DEFAULT_STRETCH_TOLERANCE)
+    mode = _resolve(fit_mode, cfg, "assembly.fit_mode", _DEFAULT_FIT_MODE)
 
     from cbml_parser import CBMLParser  # lazy: matches enricher's pattern
 
@@ -81,6 +85,7 @@ def assemble_pages(
         gutter_px=gutter,
         bg_color=bg,
         stretch_tolerance=tol,
+        fit_mode=mode,
         force=force,
     )
 
@@ -105,8 +110,14 @@ def _assemble_from_comic(
     gutter_px: int = _DEFAULT_GUTTER_PX,
     bg_color: str = _DEFAULT_BG_COLOR,
     stretch_tolerance: float = _DEFAULT_STRETCH_TOLERANCE,
+    fit_mode: str = _DEFAULT_FIT_MODE,
     force: bool = False,
 ) -> dict[int, Path]:
+    if fit_mode not in _VALID_FIT_MODES:
+        raise ValueError(
+            f"fit_mode must be one of {_VALID_FIT_MODES}, got {fit_mode!r}"
+        )
+
     aspect_w, aspect_h = comic.aspect
     page_w = int(round(aspect_w * page_height_px / aspect_h))
 
@@ -126,7 +137,7 @@ def _assemble_from_comic(
 
         canvas = _render_page_canvas(
             page, page_w, page_height_px, gutter_px, bg_color,
-            stretch_tolerance, project,
+            stretch_tolerance, fit_mode, project,
         )
 
         # Split spread canvas into physical pages and write each.
@@ -146,6 +157,7 @@ def _render_page_canvas(
     gutter: int,
     bg_color: str,
     stretch_tolerance: float,
+    fit_mode: str,
     project: Project,
 ) -> Image.Image:
     """Render one page (or spread) onto a single (span*page_w × page_h) canvas."""
@@ -174,7 +186,8 @@ def _render_page_canvas(
 
         panel_id = f"page_{page.index + 1}_panel_{panel_idx + 1}"
         panel_img = _load_panel_image(project, panel_id, slot_w, slot_h)
-        fitted = _fit_to_slot(panel_img, slot_w, slot_h, stretch_tolerance)
+        fitted = _fit_to_slot(panel_img, slot_w, slot_h, stretch_tolerance,
+                              fit_mode, bg_color)
         canvas.paste(fitted, (slot_x, slot_y))
 
     return canvas
@@ -230,14 +243,25 @@ def _fit_to_slot(
     slot_w: int,
     slot_h: int,
     stretch_tolerance: float,
+    fit_mode: str = _DEFAULT_FIT_MODE,
+    bg_color: str = _DEFAULT_BG_COLOR,
 ) -> Image.Image:
     """Fit ``img`` into a (slot_w × slot_h) box.
 
     - If dims already match the slot exactly: return as-is.
     - If relative aspect drift ≤ ``stretch_tolerance``: stretch (resize).
-    - Otherwise: cover-crop — scale so the image covers the slot, then
-      centre-crop to slot dims. Preserves aspect; loses a sliver of edge
-      content rather than distorting faces.
+    - Otherwise, behaviour depends on ``fit_mode``:
+
+      * ``contain`` (default): scale to fit *inside* the slot, pad
+        remaining area with ``bg_color``. Preserves all panel content
+        including text overlays at the panel edges.
+      * ``cover``: scale to cover the slot, centre-crop the overflow.
+        Fills the slot edge-to-edge but loses a sliver of the panel
+        on the long axis — and that sliver is exactly where the text
+        renderer puts captions, SFX, and bubbles.
+      * ``stretch``: ignore aspect, resize to fit. Distorts faces;
+        useful only when you've authored panels at the exact slot
+        aspect already.
     """
     img_w, img_h = img.size
     if img_w == slot_w and img_h == slot_h:
@@ -247,17 +271,26 @@ def _fit_to_slot(
     slot_aspect = slot_w / slot_h
     drift = abs(img_aspect - slot_aspect) / slot_aspect
 
-    if drift <= stretch_tolerance:
+    if drift <= stretch_tolerance or fit_mode == "stretch":
         return img.resize((slot_w, slot_h), Image.LANCZOS)
 
-    # Cover-crop.
-    scale = max(slot_w / img_w, slot_h / img_h)
-    new_w = max(slot_w, int(round(img_w * scale)))
-    new_h = max(slot_h, int(round(img_h * scale)))
+    if fit_mode == "cover":
+        scale = max(slot_w / img_w, slot_h / img_h)
+        new_w = max(slot_w, int(round(img_w * scale)))
+        new_h = max(slot_h, int(round(img_h * scale)))
+        resized = img.resize((new_w, new_h), Image.LANCZOS)
+        left = (new_w - slot_w) // 2
+        top = (new_h - slot_h) // 2
+        return resized.crop((left, top, left + slot_w, top + slot_h))
+
+    # contain: scale to fit inside, pad with bg_color.
+    scale = min(slot_w / img_w, slot_h / img_h)
+    new_w = max(1, int(round(img_w * scale)))
+    new_h = max(1, int(round(img_h * scale)))
     resized = img.resize((new_w, new_h), Image.LANCZOS)
-    left = (new_w - slot_w) // 2
-    top = (new_h - slot_h) // 2
-    return resized.crop((left, top, left + slot_w, top + slot_h))
+    canvas = Image.new("RGB", (slot_w, slot_h), bg_color)
+    canvas.paste(resized, ((slot_w - new_w) // 2, (slot_h - new_h) // 2))
+    return canvas
 
 
 # ---------------------------------------------------------------------------
