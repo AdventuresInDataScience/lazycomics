@@ -1,0 +1,349 @@
+## I Quant To Drink Your Blood
+aspect: us-comic
+author: TEST
+genre: comedy-drama horror
+description: A hedge fund analyst tries to survive office politics, friendship, and vampiric cravings without getting fired or staked.
+
+PAGE preset:splash
+
+PANEL A
+loc: GERALDS_APARTMENT
+chars: GERALD
+shot: dramatic low angle, Gerald silhouetted against a moonlit apartment window holding a coffee mug full of dark red liquid
+mood: comedic gothic horror, stylish, moody neon shadows
+> Gerald stands in his tiny apartment kitchen wearing an expensive shirt with pajama bottoms.
+> His eyes glow faint red in the darkness.
+> A laptop nearby displays stock charts and the words "ASIA OPEN IN 20 MINUTES."
+> A tiny bat hangs upside down from a coat rack in the background.
+[caption bg:#140000 color:#ffcccc pos:top-left] Hedge fund analyst by day.
+[caption bg:#140000 color:#ffcccc pos:top-right] Creature of the night by... also night.
+[sfx pos:center color:#770000] SLURP
+GERALD: ~Maybe tonight I won't drink anybody.~
+GERALD: "Probably not though."
+
+PAGE preset:feature-top
+
+PANEL A
+loc: THE_OFFICE
+chars: GERALD, YUKI, RANJEET, DAVID
+shot: wide establishing shot of an open-plan hedge fund office with glowing monitors and London skyline windows
+mood: energetic, corporate chaos, comedic tension
+> The Office buzzes with market panic.
+> Traders yell.
+> Phones ring.
+> Coffee flows constantly.
+> Gerald glides unnaturally calmly through the chaos holding a perfectly untouched coffee.
+[caption bg:#111111 color:#88ddff pos:top-left] Monday. 8:14 AM.
+[sfx pos:bottom-center color:#222222] RING RING RING
+
+PANEL B
+loc: THE_OFFICE
+chars: YUKI, GERALD
+shot: medium two-shot leaning over Gerald's desk
+mood: playful, conspiratorial
+> Yuki leans across Gerald's desk while Gerald rapidly types market orders with impossible speed.
+YUKI: "Did you sleep at all?"
+GERALD: "Define sleep."
+YUKI: "That is not a reassuring answer."
+
+PANEL C
+loc: THE_OFFICE
+chars: RANJEET, GERALD
+shot: medium shot, Ranjeet offering Gerald a takeaway box
+mood: goofy, friendly
+> Ranjeet proudly presents leftover garlic naan from lunch.
+RANJEET: "Garlic naan. Homemade."
+GERALD: ~Oh no.~
+GERALD: ?"Amazing. I will save it for later."?
+
+PANEL D
+loc: THE_OFFICE
+chars: DAVID
+shot: closeup on David glaring over reading glasses from his glass office
+mood: suspicious, looming
+> David watches the trio from behind the glass walls of his office.
+DAVID: ~Why are they always whispering?~
+
+PAGE grid:3x2
+  A: [1-2, 1]
+  B: [3, 1]
+  C: [1, 2]
+  D: [2, 2]
+  E: [3, 2]
+
+PANEL A
+loc: THE_OFFICE
+chars: GERALD, YUKI
+shot: wide shot of dual monitors filled with red candlestick charts
+mood: financial panic mixed with comedy
+> Markets collapse across Gerald's screens.
+> Everyone nearby panics except Gerald, who looks mildly bored.
+YUKI: "How are you so calm?"
+GERALD: "I have seen worse crashes."
+YUKI: "Like 2008?"
+GERALD: "Much earlier."
+
+PANEL B
+loc: THE_OFFICE
+chars: DAVID
+shot: extreme closeup on narrowed eyes
+mood: paranoid
+> David writes notes in a tiny notebook labeled "GERALD???"
+DAVID: ~No reflection in the microwave door. Interesting.~
+
+PANEL C
+loc: THE_OFFICE
+chars: RANJEET
+shot: medium shot spinning in office chair eating crisps
+mood: absurdly casual
+> Ranjeet scrolls memes instead of working.
+RANJEET: "If the economy collapses maybe we all become forest goblins."
+[sfx pos:top-right color:#444444] CRONCH
+
+PANEL D
+loc: THE_OFFICE
+chars: GERALD
+shot: closeup on Gerald smelling the air suddenly
+mood: ominous shift
+> Gerald freezes.
+> His pupils narrow.
+[caption bg:#220000 color:#ffaaaa pos:top-left] Blood.
+[sfx pos:center color:#660000] THMP
+
+PANEL E
+loc: THE_OFFICE
+chars: INTERN
+shot: medium shot of a young intern with a paper cut
+mood: dark comedy
+> Across the room, an intern shakes a bleeding finger dramatically.
+INTERN: !"Paper cuts are brutal!"!
+
+PAGE preset:wide-bottom
+
+PANEL A
+loc: THE_OFFICE
+chars: GERALD
+shot: extreme closeup on Gerald sweating nervously
+mood: horror tension
+> Gerald stares at the tiny drop of blood like a starving wolf.
+GERALD: ~Focus. You are a professional.~
+
+PANEL B
+loc: THE_OFFICE
+chars: YUKI
+shot: medium shot noticing Gerald acting strange
+mood: concerned but comedic
+> Yuki raises one eyebrow.
+YUKI: "You look like you are about to either faint or murder someone."
+
+PANEL C
+loc: THE_OFFICE
+chars: GERALD, YUKI, RANJEET, INTERN
+shot: wide chaotic shot as Gerald suddenly lunges across the office carrying a first aid kit
+mood: frantic comedy
+> Gerald appears beside the intern with supernatural speed carrying a first aid kit.
+[sfx pos:center color:#bb0000] FWOOOSH
+GERALD: !"BANDAID!"!
+INTERN: "Oh God how did you get here so fast?"
+
+PAGE grid:2x3
+  A: [1-2, 1]
+  B: [1, 2]
+  C: [2, 2]
+  D: [1-2, 3]
+
+PANEL A
+loc: THE_BAR
+chars: GERALD, YUKI, RANJEET
+shot: warm wide shot of a cozy after-work bar with neon signs and rain outside
+mood: relaxed, character-focused, sitcom energy
+> The trio sits in a dimly lit booth surrounded by exhausted finance workers.
+[caption bg:#222222 color:#ffddaa pos:top-left] Later that night.
+
+PANEL B
+loc: THE_BAR
+chars: YUKI, GERALD
+shot: closeup two-shot across the table
+mood: intimate, sincere
+> Yuki studies Gerald carefully.
+YUKI: "You are weird, Gerald."
+GERALD: "That narrows it down."
+YUKI: "No. Like immortal weird."
+
+PANEL C
+loc: THE_BAR
+chars: RANJEET
+shot: medium shot lifting a glowing cocktail
+mood: comedic
+> Ranjeet dramatically lifts a glowing green cocktail.
+RANJEET: "Behold. The Bloomberg Terminal."
+[sfx pos:center color:#00aa00] FZZZZT
+
+PANEL D
+loc: THE_BAR
+chars: GERALD, YUKI
+shot: quiet side-profile shot with rain-covered windows behind them
+mood: melancholy hidden beneath comedy
+> Gerald looks toward the rain-soaked windows.
+GERALD: "Do you ever get tired of pretending to be normal?"
+YUKI: "Constantly."
+GERALD: ~Huh.~
+
+PAGE preset:feature-left
+
+PANEL A
+loc: GERALDS_APARTMENT
+chars: GERALD
+shot: large dramatic panel, Gerald alone in darkness removing his office tie
+mood: gothic horror, lonely
+> Gerald enters his apartment.
+> The cheerful office mask disappears immediately.
+> His fangs extend slowly.
+[sfx pos:bottom-right color:#770000] KRRK
+
+PANEL B
+loc: GERALDS_APARTMENT
+chars: GERALD
+shot: closeup on fridge opening
+mood: unsettling dark comedy
+> Inside the fridge are blood bags neatly organized beside yogurt and takeaway noodles.
+GERALD: ~Meal prep. Responsible adulthood.~
+
+PANEL C
+loc: GERALDS_APARTMENT
+chars: GERALD
+shot: mirror shot with no reflection visible
+mood: eerie silence
+> Gerald stares into a bathroom mirror.
+> Nothing stares back.
+[caption bg:#000000 color:#ffffff pos:bottom-center] That part still bothered him.
+
+PAGE grid:3x3
+  A: [1-3, 1]
+  B: [1, 2]
+  C: [2, 2]
+  D: [3, 2]
+  E: [1-2, 3]
+  F: [3, 3]
+
+PANEL A
+loc: THE_OFFICE
+chars: DAVID
+shot: wide shot of David alone late at night in the office surrounded by conspiracy evidence
+mood: paranoid thriller
+> David has created an investigation board connecting Gerald to historical stock crashes, bat sightings, and suspiciously pale employee photos.
+[sfx pos:top-right color:#444444] SCRIBBLE SCRIBBLE
+
+PANEL B
+loc: THE_OFFICE
+chars: DAVID
+shot: closeup holding printed employee badge photo
+mood: intense suspicion
+> David compares several employee badge photographs of Gerald.
+DAVID: ~Same hairstyle in every ID photo for ten years.~
+
+PANEL C
+loc: THE_OFFICE
+chars: DAVID
+shot: closeup opening browser tab reading vampire identification articles
+mood: comedic paranoia
+> David squints at an article about garlic and vampires.
+
+PANEL D
+loc: THE_OFFICE
+chars: DAVID
+shot: medium shot triumphantly holding garlic bread from the cafeteria
+mood: ridiculous determination
+> David raises a tray of garlic bread triumphantly.
+DAVID: "Tomorrow we test him."
+
+PANEL E
+loc: THE_OFFICE
+chars: GERALD, YUKI
+shot: over-the-shoulder from behind David spying on them
+mood: spy-comedy
+> Gerald and Yuki quietly talk near the vending machine.
+YUKI: ?"David is absolutely spying on us."?
+GERALD: ?"I know."?
+
+PANEL F
+loc: THE_OFFICE
+chars: DAVID
+shot: extreme closeup eye through blinds
+mood: absurd menace
+[sfx pos:center color:#111111] CREEEAK
+
+PAGE spread:2 grid:2x2
+  A: [1, 1]
+  B: [2, 1]
+  C: [1, 2]
+  D: [2, 2]
+
+PANEL A
+loc: THE_OFFICE
+chars: GERALD, DAVID
+shot: dramatic wide confrontation shot across the office at night
+mood: horror-comedy climax
+> Stormlight flashes through the office windows as David slams garlic bread onto Gerald's desk.
+DAVID: !"EAT IT!"!
+[sfx pos:center color:#ffeeaa] THUD
+
+PANEL B
+loc: THE_OFFICE
+chars: GERALD, YUKI, RANJEET
+shot: chaotic reaction shot
+mood: frantic comedy
+> Gerald recoils in terror while Yuki and Ranjeet stare in confusion.
+RANJEET: "Why is this happening?"
+YUKI: "Honestly this explains a lot."
+
+PANEL C
+loc: THE_OFFICE
+chars: GERALD
+shot: horror closeup with red glowing eyes
+mood: sudden dark horror
+> Gerald's eyes blaze crimson.
+> Tiny fangs glint in the lightning.
+[sfx pos:center color:#aa0000] SKREEEE
+GERALD: !"I HAVE A CONDITION!"!
+
+PANEL D
+loc: THE_OFFICE
+chars: GERALD, DAVID, YUKI, RANJEET
+shot: wide comedic aftermath shot
+mood: awkward silence after chaos
+> Everyone stands frozen.
+> David slowly lowers the garlic bread.
+DAVID: "Honestly the vampire thing concerns me less than your Q3 numbers."
+GERALD: "Fair."
+
+PAGE preset:strip-3
+
+PANEL A
+loc: THE_BAR
+chars: GERALD, YUKI, RANJEET, DAVID
+shot: medium group shot sharing drinks awkwardly
+mood: warm sitcom ending
+> The entire group sits together after work.
+> David still looks deeply uncomfortable.
+DAVID: "So there are more of you?"
+GERALD: "Probably."
+
+PANEL B
+loc: THE_BAR
+chars: RANJEET
+shot: closeup proudly presenting another glowing cocktail
+mood: pure comedy
+> Ranjeet proudly presents another glowing cocktail.
+RANJEET: "I call this one the NASDAQ Nosferatu."
+[sfx pos:center color:#00ff88] BLORP
+
+PANEL C
+loc: THE_BAR
+chars: GERALD, YUKI
+shot: quiet final two-shot by the rain-covered window
+mood: bittersweet, hopeful
+> Gerald smiles genuinely for the first time.
+YUKI: "You know, for a vampire, you are kind of pathetic."
+GERALD: "That is the nicest thing anyone has said to me in centuries."
+[caption bg:#111111 color:#ffcccc pos:bottom-right] End.

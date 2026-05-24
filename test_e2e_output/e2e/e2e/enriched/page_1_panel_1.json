@@ -1,0 +1,66 @@
+{
+  "panel_id": "page_1_panel_1",
+  "page_index": 0,
+  "panel_index": 0,
+  "aspect_ratio": 0.6666666666666666,
+  "pixel_rect": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "bleed_edges": [
+    "bottom",
+    "left",
+    "right",
+    "top"
+  ],
+  "loc_identifier": "steampunk_alley",
+  "loc_description": "narrow steampunk alley, brass pipes, yellow gaslight, cobblestones",
+  "loc_reference_images": [
+    "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\locations\\steampunk_alley\\references\\alley_ref.png"
+  ],
+  "characters": [
+    {
+      "identifier": "NOVA",
+      "visual_description": "young woman, short blue hair, leather jacket, cyberpunk look",
+      "reference_images": [
+        "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\characters\\NOVA\\references\\nova_ref.png"
+      ],
+      "lora": null
+    }
+  ],
+  "primary_character": "NOVA",
+  "char_generation_strategy": "single",
+  "inpaint_order": [
+    "NOVA"
+  ],
+  "occlusion_order": [],
+  "shot_hint": "low angle, dramatic",
+  "mood": "tense",
+  "action": "Nova steps into the alley, gaslight flickering overhead.",
+  "dialogue_lines": [
+    {
+      "character": "NOVA",
+      "text": "This is the place.",
+      "bubble_type": "speech"
+    }
+  ],
+  "caption_boxes": [],
+  "sfx_lines": [],
+  "bubble_layout": [
+    {
+      "character": "NOVA",
+      "x_frac": 0.0,
+      "y_frac": 0.0,
+      "width_frac": 1.0,
+      "height_frac": 1.0
+    }
+  ],
+  "composition_flags": {},
+  "panel_context": {},
+  "pose_ref": null,
+  "lora_stack": [],
+  "prompt": null,
+  "negative_prompt": null
+}

@@ -1,0 +1,64 @@
+{
+  "panel_id": "page_2_panel_2",
+  "page_index": 1,
+  "panel_index": 1,
+  "aspect_ratio": 0.6666666666666666,
+  "pixel_rect": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "bleed_edges": [
+    "right",
+    "top"
+  ],
+  "loc_identifier": "steampunk_alley",
+  "loc_description": "narrow steampunk alley, brass pipes, yellow gaslight, cobblestones",
+  "loc_reference_images": [
+    "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\locations\\steampunk_alley\\references\\alley_ref.png"
+  ],
+  "characters": [
+    {
+      "identifier": "REX",
+      "visual_description": "grizzled older man, grey beard, trenchcoat, scarred face",
+      "reference_images": [
+        "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\characters\\REX\\references\\rex_ref.png"
+      ],
+      "lora": null
+    }
+  ],
+  "primary_character": "REX",
+  "char_generation_strategy": "single",
+  "inpaint_order": [
+    "REX"
+  ],
+  "occlusion_order": [],
+  "shot_hint": "closeup",
+  "mood": "menacing",
+  "action": "",
+  "dialogue_lines": [
+    {
+      "character": "REX",
+      "text": "Last chance to walk away.",
+      "bubble_type": "speech"
+    }
+  ],
+  "caption_boxes": [],
+  "sfx_lines": [],
+  "bubble_layout": [
+    {
+      "character": "REX",
+      "x_frac": 0.0,
+      "y_frac": 0.0,
+      "width_frac": 1.0,
+      "height_frac": 1.0
+    }
+  ],
+  "composition_flags": {},
+  "panel_context": {},
+  "pose_ref": null,
+  "lora_stack": [],
+  "prompt": null,
+  "negative_prompt": null
+}

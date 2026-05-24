@@ -1,0 +1,45 @@
+{
+  "panel_id": "page_2_panel_3",
+  "page_index": 1,
+  "panel_index": 2,
+  "aspect_ratio": 0.6666666666666666,
+  "pixel_rect": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "bleed_edges": [
+    "bottom",
+    "left"
+  ],
+  "loc_identifier": "steampunk_alley",
+  "loc_description": "narrow steampunk alley, brass pipes, yellow gaslight, cobblestones",
+  "loc_reference_images": [
+    "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\locations\\steampunk_alley\\references\\alley_ref.png"
+  ],
+  "characters": [],
+  "primary_character": null,
+  "char_generation_strategy": "single",
+  "inpaint_order": [],
+  "occlusion_order": [],
+  "shot_hint": "wide establishing",
+  "mood": null,
+  "action": "Rain begins to fall on empty cobblestones.",
+  "dialogue_lines": [],
+  "caption_boxes": [],
+  "sfx_lines": [
+    {
+      "text": "PITTER-PATTER",
+      "color": "#4488ff",
+      "position": "center"
+    }
+  ],
+  "bubble_layout": [],
+  "composition_flags": {},
+  "panel_context": {},
+  "pose_ref": null,
+  "lora_stack": [],
+  "prompt": null,
+  "negative_prompt": null
+}

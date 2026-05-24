@@ -1,0 +1,50 @@
+## Integration Test Comic
+aspect: 2:3
+author: lazycomics test suite
+
+PAGE preset:splash
+
+PANEL A
+loc: steampunk_alley
+chars: NOVA
+shot: low angle, dramatic
+mood: tense
+> Nova steps into the alley, gaslight flickering overhead.
+
+NOVA: "This is the place."
+
+PAGE preset:grid-2x2
+
+PANEL A
+loc: steampunk_alley
+chars: NOVA, REX
+shot: medium two-shot
+mood: confrontational
+> They face each other across the narrow alley.
+
+NOVA: "You shouldn't have come here."
+REX: "Neither should you."
+
+PANEL B
+loc: steampunk_alley
+chars: REX
+shot: closeup
+mood: menacing
+
+REX: "Last chance to walk away."
+
+PANEL C
+loc: steampunk_alley
+shot: wide establishing
+> Rain begins to fall on empty cobblestones.
+
+[sfx top-right color:#4488ff] PITTER-PATTER
+
+PANEL D
+loc: steampunk_alley
+chars: NOVA, REX
+shot: closeup
+mood: violent
+> They lunge, fighting and grappling in the rain.
+
+[sfx center color:#ff2200] CRASH

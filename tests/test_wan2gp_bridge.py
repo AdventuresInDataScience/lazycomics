@@ -19,11 +19,18 @@ sys.path.insert(0, str(SRC))
 
 from lazycomics.project import create_project  # noqa: E402
 from lazycomics.wan2gp_bridge import (  # noqa: E402
+    _build_inpaint_task,
+    _build_inpaint_prompt,
+    _build_panel_task,
     _build_queue_zip,
     _build_wangp_task,
+    _collect_loras,
     _collect_outputs,
     _collect_refs,
     _compute_resolution,
+    _ensure_lora,
+    _generate_mask,
+    _get_character_region,
     _load_bridge_config,
     _read_prompt,
     generate_panels,
@@ -398,12 +405,12 @@ def test_generate_panels_force_regenerates(env):
     env.write_ref("p1")
     env.write_panel("p1")
 
-    def fake_run(cmd, cwd, capture_output, text):
+    def fake_run(cmd, cwd, **kwargs):
         # Simulate Wan2GP writing one output image
         out_dir = cmd[cmd.index("--output-dir") + 1]
         Path(out_dir).mkdir(parents=True, exist_ok=True)
         (Path(out_dir) / "00001.png").write_bytes(b"regenerated")
-        return mock.Mock(returncode=0, stdout="", stderr="")
+        return mock.Mock(returncode=0)
 
     with mock.patch("lazycomics.wan2gp_bridge.subprocess.run", side_effect=fake_run):
         results = generate_panels(env.project, force=True, config=_base_config())
@@ -419,16 +426,297 @@ def test_generate_panels_subprocess_failure_raises(env):
 
     with mock.patch(
         "lazycomics.wan2gp_bridge.subprocess.run",
-        return_value=mock.Mock(returncode=1, stdout="", stderr="CUDA OOM"),
+        return_value=mock.Mock(returncode=1),
     ):
         try:
             generate_panels(env.project, force=True, config=_base_config())
             assert False, "should have raised"
         except RuntimeError as e:
-            assert "CUDA OOM" in str(e)
+            # stderr is no longer captured (it streams to the user's
+            # terminal live), so the exception just references the exit code.
+            assert "exited with code 1" in str(e)
 
 
 @_with_env
 def test_generate_panels_no_enriched_returns_empty(env):
     results = generate_panels(env.project, config=_base_config())
     assert results == {}
+
+
+# ---------------------------------------------------------------------------
+# LoRA collection and wiring
+# ---------------------------------------------------------------------------
+
+
+def test_task_with_loras():
+    cfg = _load_bridge_config(_base_config())
+    task = _build_wangp_task(
+        {}, "x", "", [], "1024x1024", cfg,
+        activated_loras=["char.safetensors"],
+        loras_multipliers="0.7",
+    )
+    assert task["activated_loras"] == ["char.safetensors"]
+    assert task["loras_multipliers"] == "0.7"
+
+
+def test_task_without_loras():
+    cfg = _load_bridge_config(_base_config())
+    task = _build_wangp_task({}, "x", "", [], "1024x1024", cfg)
+    assert task["activated_loras"] == []
+    assert task["loras_multipliers"] == ""
+
+
+def test_collect_loras_single_char():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        loras_dir = tmp / "loras"
+        loras_dir.mkdir()
+        lora_src = tmp / "nova.safetensors"
+        lora_src.write_bytes(b"fakeweights")
+
+        panel = {"characters": [{
+            "identifier": "NOVA",
+            "lora": {"path": str(lora_src), "weight": 0.8, "trigger_word": "nova_v1"},
+        }]}
+        cfg = {"loras_dir": loras_dir}
+
+        names, mults, triggers = _collect_loras(panel, cfg)
+        assert names == ["nova.safetensors"]
+        assert mults == "0.8"
+        assert triggers == ["nova_v1"]
+        assert (loras_dir / "nova.safetensors").is_file()
+
+
+def test_collect_loras_multi_char():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        loras_dir = tmp / "loras"
+        loras_dir.mkdir()
+        l1 = tmp / "a.safetensors"; l1.write_bytes(b"l1")
+        l2 = tmp / "b.safetensors"; l2.write_bytes(b"l2")
+
+        panel = {"characters": [
+            {"identifier": "A", "lora": {"path": str(l1), "weight": 0.8, "trigger_word": "tw_a"}},
+            {"identifier": "B", "lora": {"path": str(l2), "weight": 0.6, "trigger_word": None}},
+        ]}
+        cfg = {"loras_dir": loras_dir}
+
+        names, mults, triggers = _collect_loras(panel, cfg)
+        assert names == ["a.safetensors", "b.safetensors"]
+        assert mults == "0.8,0.6"
+        assert triggers == ["tw_a"]
+
+
+def test_collect_loras_no_loras():
+    cfg = {"loras_dir": Path("/tmp")}
+    names, mults, triggers = _collect_loras({"characters": []}, cfg)
+    assert names == [] and mults == "" and triggers == []
+
+
+def test_collect_loras_skips_null_lora():
+    cfg = {"loras_dir": Path("/tmp")}
+    panel = {"characters": [
+        {"identifier": "X", "lora": None},
+    ]}
+    names, mults, triggers = _collect_loras(panel, cfg)
+    assert names == []
+
+
+def test_ensure_lora_copies_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        src = tmp / "test.safetensors"
+        src.write_bytes(b"weights")
+        loras_dir = tmp / "loras"
+
+        dst = _ensure_lora(src, loras_dir)
+        assert dst == loras_dir / "test.safetensors"
+        assert dst.read_bytes() == b"weights"
+
+
+def test_ensure_lora_skips_existing_same_size():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        src = tmp / "test.safetensors"
+        src.write_bytes(b"weights")
+        loras_dir = tmp / "loras"
+        loras_dir.mkdir()
+        existing = loras_dir / "test.safetensors"
+        existing.write_bytes(b"weights")  # same size
+
+        dst = _ensure_lora(src, loras_dir)
+        assert dst == existing
+
+
+# ---------------------------------------------------------------------------
+# Inpaint task builder
+# ---------------------------------------------------------------------------
+
+
+def test_inpaint_task_fields():
+    cfg = _load_bridge_config(_base_config())
+    task = _build_inpaint_task(
+        source_image=Path("/img/panel.png"),
+        mask_image=Path("/img/mask.png"),
+        prompt="a warrior", negative_prompt="blurry",
+        resolution="704x1024", bridge_cfg=cfg,
+    )
+    assert task["image_mode"] == 2
+    assert task["video_prompt_type"] == "VAG"
+    assert task["denoising_strength"] == 1.0
+    assert task["masking_strength"] == 0.3
+    assert task["image_start"] == "/img/panel.png"
+    assert task["image_end"] == "/img/mask.png"
+
+
+def test_inpaint_task_with_loras():
+    cfg = _load_bridge_config(_base_config())
+    task = _build_inpaint_task(
+        Path("/p.png"), Path("/m.png"), "x", "", "1024x1024", cfg,
+        activated_loras=["hero.safetensors"], loras_multipliers="0.8",
+    )
+    assert task["activated_loras"] == ["hero.safetensors"]
+
+
+# ---------------------------------------------------------------------------
+# Character region + mask generation
+# ---------------------------------------------------------------------------
+
+
+def test_character_region_from_bubble():
+    bubble = {"character": "REX", "x_frac": 0.5, "y_frac": 0.7,
+              "width_frac": 0.4, "height_frac": 0.2}
+    region = _get_character_region("REX", {"REX": bubble}, 3, 1)
+    assert region[3] == 1.0  # full height
+    assert region[0] >= 0.0
+
+
+def test_character_region_fallback():
+    region = _get_character_region("GHOST", {}, 3, 2)
+    assert abs(region[0] - 2 / 3) < 0.01
+    assert abs(region[2] - 1 / 3) < 0.01
+
+
+@_with_env
+def test_generate_mask_creates_correct_image(env):
+    from PIL import Image
+    env.project.panels_dir.mkdir(parents=True, exist_ok=True)
+    mask_path = _generate_mask(704, 1024, (0.5, 0.0, 0.5, 1.0),
+                               env.project, "p1", 1)
+    assert mask_path.is_file()
+    mask = Image.open(mask_path)
+    assert mask.size == (704, 1024)
+    assert mask.getpixel((10, 512)) == 0       # left = black (preserve)
+    assert mask.getpixel((600, 512)) == 255    # right = white (repaint)
+
+
+# ---------------------------------------------------------------------------
+# Inpaint prompt
+# ---------------------------------------------------------------------------
+
+
+def test_inpaint_prompt_full():
+    p = _build_inpaint_prompt(
+        {"identifier": "REX", "visual_description": "a grizzled warrior"},
+        {"mood": "dark", "action": "standing guard"},
+    )
+    assert "grizzled warrior" in p
+    assert "dark mood" in p
+    assert "standing guard" in p
+
+
+def test_inpaint_prompt_fallback():
+    p = _build_inpaint_prompt({"identifier": "REX"}, {})
+    assert "REX" in p
+
+
+# ---------------------------------------------------------------------------
+# Multi-inpaint integration
+# ---------------------------------------------------------------------------
+
+
+@_with_env
+def test_multi_inpaint_runs_base_plus_inpaint(env):
+    env.write_enriched(
+        "p1",
+        char_generation_strategy="multi_inpaint",
+        primary_character="NOVA",
+        inpaint_order=["NOVA", "REX"],
+        characters=[
+            {"identifier": "NOVA", "visual_description": "a pilot",
+             "reference_images": [], "lora": None},
+            {"identifier": "REX", "visual_description": "a warrior",
+             "reference_images": [], "lora": None},
+        ],
+        bubble_layout=[
+            {"character": "NOVA", "x_frac": 0.0, "y_frac": 0.7,
+             "width_frac": 0.5, "height_frac": 0.2},
+            {"character": "REX", "x_frac": 0.5, "y_frac": 0.7,
+             "width_frac": 0.5, "height_frac": 0.2},
+        ],
+        mood="tense",
+    )
+    env.write_prompt("p1", "two characters in a standoff")
+
+    call_count = [0]
+
+    def fake_run(cmd, cwd, **kwargs):
+        call_count[0] += 1
+        od = cmd[cmd.index("--output-dir") + 1]
+        Path(od).mkdir(parents=True, exist_ok=True)
+        (Path(od) / "00001.png").write_bytes(
+            b"pass_" + str(call_count[0]).encode()
+        )
+        return mock.Mock(returncode=0)
+
+    with mock.patch("lazycomics.wan2gp_bridge.subprocess.run",
+                    side_effect=fake_run):
+        results = generate_panels(env.project, force=True,
+                                  config=_base_config())
+
+    assert "p1" in results
+    assert call_count[0] == 2  # base + 1 inpaint
+    assert (env.project.panels_dir / "p1.png").read_bytes() == b"pass_2"
+
+
+@_with_env
+def test_single_and_multi_panels_in_same_run(env):
+    # Single panel
+    env.write_enriched("s1", char_generation_strategy="single",
+                       characters=[])
+    env.write_prompt("s1", "a landscape")
+
+    # Multi panel
+    env.write_enriched(
+        "m1",
+        char_generation_strategy="multi_inpaint",
+        primary_character="A",
+        inpaint_order=["A", "B"],
+        characters=[
+            {"identifier": "A", "visual_description": "char A",
+             "reference_images": [], "lora": None},
+            {"identifier": "B", "visual_description": "char B",
+             "reference_images": [], "lora": None},
+        ],
+        bubble_layout=[],
+    )
+    env.write_prompt("m1", "two chars")
+
+    calls = []
+
+    def fake_run(cmd, cwd, **kwargs):
+        calls.append(cmd)
+        od = cmd[cmd.index("--output-dir") + 1]
+        Path(od).mkdir(parents=True, exist_ok=True)
+        (Path(od) / "00001.png").write_bytes(b"img")
+        return mock.Mock(returncode=0)
+
+    with mock.patch("lazycomics.wan2gp_bridge.subprocess.run",
+                    side_effect=fake_run):
+        results = generate_panels(env.project, force=True,
+                                  config=_base_config())
+
+    assert "s1" in results
+    assert "m1" in results
+    # 1 batch call for single + 2 sequential for multi = 3
+    assert len(calls) == 3

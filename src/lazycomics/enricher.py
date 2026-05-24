@@ -118,7 +118,9 @@ def _build_panel(
         DialogueLine(character=d.character, text=d.text, bubble_type=d.bubble_type)
         for d in parser_panel.dialogue
     ]
-    strategy = _compute_char_strategy(char_names)
+    strategy = _compute_char_strategy(
+        char_names, parser_panel.shot or "", parser_panel.action or "",
+    )
     primary = _select_primary_character(
         char_names, parser_panel.shot or "", dialogue,
     )
@@ -188,13 +190,46 @@ def _compute_bubble_layout(char_identifiers: list[str]) -> list[BubbleRegion]:
     ]
 
 
-def _compute_char_strategy(char_names: list[str]) -> str:
+_INTERACTION_KEYWORDS = frozenset((
+    "fighting", "fight", "grappling", "grapple", "wrestling", "wrestle",
+    "embracing", "embrace", "hugging", "hug", "kissing", "kiss",
+    "carrying", "carry", "holding hands", "hand in hand",
+    "tackling", "tackle", "pinning", "choking", "strangling",
+    "dancing together", "dancing with", "leaning on", "leaning against",
+    "back to back", "back-to-back", "shoulder to shoulder",
+    "arm in arm", "arm-in-arm", "piggyback", "intertwined",
+    "tangled", "clashing", "collision", "colliding",
+    "pulling", "pushing", "dragging", "grabbing", "grabbed",
+    "overlapping", "on top of", "beneath", "under",
+))
+
+
+def _compute_char_strategy(
+    char_names: list[str],
+    shot_hint: str = "",
+    action: str = "",
+) -> str:
     """``"single"`` for 0–1 characters, ``"multi_inpaint"`` for 2+.
+
+    Auto-downgrades to ``"single"`` when the ``shot`` or ``action`` text
+    contains interaction keywords that imply physical overlap between
+    characters (fighting, embracing, carrying, etc.). Multi-pass
+    inpainting would overwrite earlier characters in these scenes, so a
+    single combined pass produces better results.
 
     The wan2gp_bridge uses this to decide whether to generate the panel in
     one pass or to run multiple inpaint passes (one per additional character).
     """
-    return "multi_inpaint" if len(char_names) >= 2 else "single"
+    if len(char_names) < 2:
+        return "single"
+
+    # Check for interaction keywords that imply character overlap
+    combined = f"{shot_hint} {action}".lower()
+    for kw in _INTERACTION_KEYWORDS:
+        if kw in combined:
+            return "single"
+
+    return "multi_inpaint"
 
 
 def _select_primary_character(

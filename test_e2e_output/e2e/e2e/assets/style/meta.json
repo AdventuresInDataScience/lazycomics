@@ -1,0 +1,7 @@
+{
+  "preset": "custom",
+  "prompt_prefix": "noir comic art, heavy shadows, dramatic contrast",
+  "lora_path": null,
+  "lora_weight": null,
+  "trigger_word": null
+}

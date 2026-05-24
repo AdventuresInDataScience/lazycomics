@@ -647,6 +647,34 @@ def test_strategy_multi_inpaint_when_three_chars(env):
     assert panel.char_generation_strategy == "multi_inpaint"
 
 
+@_with_env
+def test_strategy_downgrades_to_single_on_fighting(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX"],
+                                     action="fighting fiercely")])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.char_generation_strategy == "single"
+
+
+@_with_env
+def test_strategy_downgrades_on_shot_hint_embrace(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX"],
+                                     shot="closeup embracing")])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.char_generation_strategy == "single"
+
+
+@_with_env
+def test_strategy_stays_multi_when_no_interaction(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX"],
+                                     shot="wide shot",
+                                     action="talking across a table")])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.char_generation_strategy == "multi_inpaint"
+
+
 # ---------------------------------------------------------------------------
 # primary_character — shot-hint match, dialogue-count fallback, first-listed
 # ---------------------------------------------------------------------------

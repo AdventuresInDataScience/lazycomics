@@ -42,7 +42,7 @@ assembly:
 # required) set `api_key`.
 llm:
   url: http://localhost:11434/v1
-  model: llama3.1:8b
+  model: qwen2.5-coder:7b
 
   # Bearer token for hosted services. Leave null for local servers that
   # don't require auth (Ollama, llama.cpp server, LM Studio).
@@ -93,3 +93,38 @@ wan2gp:
 
   # Extra CLI flags passed to wgp.py (e.g. ["--attention", "sdpa"]).
   cli_args: []
+
+  # Directory where Wan2GP looks for LoRA files. Defaults to
+  # <wgp_root>/loras if not set. LoRA .safetensors registered in
+  # lazycomics are auto-copied here so the headless CLI can find them.
+  loras_dir: null
+
+  # Inpaint settings (multi-character panels)
+  inpaint_denoising: 1.0        # denoising_strength for inpaint passes
+  inpaint_masking_strength: 0.3  # edge blending for inpaint mask
+  inpaint_mask_expand: 0         # pixel expansion of mask boundary
+
+
+# ---------------------------------------------------------------------------
+# Real-ESRGAN upscaler  (src/lazycomics/upscaler.py)
+# ---------------------------------------------------------------------------
+# Upscales assembled pages. Requires the realesrgan-ncnn-vulkan binary
+# (portable, no Python/CUDA needed). Download from:
+# https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases
+#
+# NOTE: wan2gp.base_resolution above controls the IMAGE GENERATION
+# resolution (long edge of each panel). The final print resolution is
+# determined by the page assembly grid × this upscale factor.
+# e.g. base_resolution: 1024 + 2×3 grid + 4× upscale ≈ 8192×12288px
+upscaler:
+  # Path to the binary (or just the name if it's on PATH).
+  executable: realesrgan-ncnn-vulkan
+
+  # Model name. Options:
+  #   realesrgan-x4plus-anime  — anime/illustration 4x (best for comics)
+  #   realesrgan-x4plus        — general photography 4x
+  #   realesr-animevideov3     — anime 2x/3x/4x
+  model: realesrgan-x4plus-anime
+
+  # Upscale factor (fixed by model: 4 for x4plus variants).
+  scale: 4

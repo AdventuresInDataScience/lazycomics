@@ -23,7 +23,7 @@ Required in ``lazycomics_config.yaml`` under the ``wan2gp`` key::
 
     wan2gp:
       wgp_root: C:\\pinokio\\api\\wan.git\\app
-      python_bin: C:\pinokio\api\wan.git\app\env\Scripts\python.exe
+      python_bin: C:\\pinokio\\api\\wan.git\\app\\env\\Scripts\\python.exe
       architecture: flux2_klein_9b
       default_steps: 4
       base_resolution: 1024
@@ -49,6 +49,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -119,9 +120,14 @@ def generate_panels(
     if not to_generate:
         return results
 
-    # Build task list
-    tasks = []
-    task_panel_ids: list[str] = []
+    # Ensure panels/ exists
+    project.panels_dir.mkdir(parents=True, exist_ok=True)
+
+    # Partition into single-pass (batchable) and multi-inpaint (sequential)
+    single_tasks: list[dict[str, Any]] = []
+    single_ids: list[str] = []
+    multi_panels: list[tuple[str, dict[str, Any]]] = []
+
     for pid in to_generate:
         enriched_path = project.enriched_dir / f"{pid}.json"
         if not enriched_path.is_file():
@@ -129,44 +135,208 @@ def generate_panels(
             continue
 
         panel = json.loads(enriched_path.read_text(encoding="utf-8"))
-        prompt = _read_prompt(project.prompts_dir, pid)
-        neg_prompt = _read_prompt(project.prompts_dir, pid, negative=True)
-        refs = _collect_refs(project.refs_prepared_dir, pid)
-        resolution = _compute_resolution(
-            float(panel.get("aspect_ratio") or 1.0),
-            bridge_cfg["base_resolution"],
+        strategy = panel.get("char_generation_strategy", "single")
+
+        if strategy == "multi_inpaint":
+            multi_panels.append((pid, panel))
+        else:
+            task = _build_panel_task(panel, pid, project, bridge_cfg)
+            single_tasks.append(task)
+            single_ids.append(pid)
+
+    total = len(single_ids) + len(multi_panels)
+    print(
+        f"[wan2gp] generating {total} panel(s): "
+        f"{len(single_ids)} single + {len(multi_panels)} multi-inpaint",
+        flush=True,
+    )
+
+    # --- Batch: all single-strategy panels in one queue ---
+    if single_tasks:
+        print(
+            f"[wan2gp] > batch of {len(single_tasks)} panel(s): "
+            f"{', '.join(single_ids)}",
+            flush=True,
+        )
+        with tempfile.TemporaryDirectory(prefix="lazycomics_wgp_") as tmpdir:
+            tmp = Path(tmpdir)
+            queue_path = tmp / "queue.zip"
+            wgp_output = tmp / "output"
+            wgp_output.mkdir()
+            _build_queue_zip(single_tasks, queue_path)
+            _run_wangp(queue_path, wgp_output, bridge_cfg)
+            results.update(_collect_outputs(wgp_output, single_ids, project))
+
+    # --- Sequential: each multi-inpaint panel runs base + N inpaint passes ---
+    for pid, panel in multi_panels:
+        chars = panel.get("inpaint_order") or []
+        print(
+            f"[wan2gp] > multi-inpaint {pid} "
+            f"({len(chars)} passes for {' -> '.join(chars)})",
+            flush=True,
+        )
+        result_path = _run_multi_inpaint(pid, panel, project, bridge_cfg)
+        if result_path:
+            results[pid] = result_path
+
+    return results
+
+
+def _build_panel_task(
+    panel: dict[str, Any],
+    pid: str,
+    project: Project,
+    bridge_cfg: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a single image-gen task for a panel (shared by single + base pass)."""
+    prompt = _read_prompt(project.prompts_dir, pid)
+    neg_prompt = _read_prompt(project.prompts_dir, pid, negative=True)
+    refs = _collect_refs(project.refs_prepared_dir, pid)
+    resolution = _compute_resolution(
+        float(panel.get("aspect_ratio") or 1.0),
+        bridge_cfg["base_resolution"],
+    )
+
+    lora_names, lora_mults, trigger_words = _collect_loras(panel, bridge_cfg)
+
+    full_prompt = prompt
+    if trigger_words:
+        prefix = ", ".join(trigger_words)
+        full_prompt = f"{prefix}, {prompt}" if prompt else prefix
+
+    return _build_wangp_task(
+        panel_data=panel,
+        prompt=full_prompt,
+        negative_prompt=neg_prompt,
+        refs=refs,
+        resolution=resolution,
+        bridge_cfg=bridge_cfg,
+        activated_loras=lora_names,
+        loras_multipliers=lora_mults,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Multi-inpaint orchestration
+# ---------------------------------------------------------------------------
+
+
+def _run_multi_inpaint(
+    pid: str,
+    panel: dict[str, Any],
+    project: Project,
+    bridge_cfg: dict[str, Any],
+) -> Path | None:
+    """Generate a multi-character panel: base pass + sequential inpaints.
+
+    1. Base pass — image_mode 1, full prompt, primary character's LoRA + ref.
+    2. For each character in ``inpaint_order[1:]``:
+       - Create a mask image (white = region for the new character).
+       - Inpaint task (image_mode 2) with current panel + mask + character prompt.
+       - Result becomes input for the next pass.
+
+    Returns the final panel path, or ``None`` on failure.
+    """
+    inpaint_order = panel.get("inpaint_order") or []
+    if len(inpaint_order) < 2:
+        # Shouldn't be routed here, but handle gracefully
+        task = _build_panel_task(panel, pid, project, bridge_cfg)
+        return _run_single_task_and_collect(task, pid, project, bridge_cfg)
+
+    resolution = _compute_resolution(
+        float(panel.get("aspect_ratio") or 1.0),
+        bridge_cfg["base_resolution"],
+    )
+    w, h = (int(x) for x in resolution.split("x"))
+
+    total_passes = len(inpaint_order)
+
+    # --- Base pass: primary character ---
+    primary = inpaint_order[0]
+    print(f"[wan2gp]   pass 1/{total_passes} (base): {primary}", flush=True)
+    base_task = _build_panel_task(panel, pid, project, bridge_cfg)
+    current_panel = _run_single_task_and_collect(
+        base_task, pid, project, bridge_cfg,
+    )
+    if not current_panel:
+        return None
+
+    # --- Inpaint passes: remaining characters ---
+    chars_lookup = {
+        c["identifier"]: c for c in (panel.get("characters") or [])
+    }
+    bubble_lookup = {
+        b["character"]: b for b in (panel.get("bubble_layout") or [])
+    }
+
+    for pass_idx, char_name in enumerate(inpaint_order[1:], start=1):
+        print(
+            f"[wan2gp]   pass {pass_idx + 1}/{total_passes} (inpaint): {char_name}",
+            flush=True,
         )
 
-        task = _build_wangp_task(
-            panel_data=panel,
-            prompt=prompt,
+        char_data = chars_lookup.get(char_name, {})
+
+        # Build mask from bubble_layout position (or default zone)
+        mask_region = _get_character_region(
+            char_name, bubble_lookup, len(inpaint_order), pass_idx,
+        )
+        mask_path = _generate_mask(w, h, mask_region, project, pid, pass_idx)
+
+        # Build character-focused prompt
+        char_prompt = _build_inpaint_prompt(char_data, panel)
+        neg_prompt = _read_prompt(project.prompts_dir, pid, negative=True)
+
+        # Collect LoRA for just this character
+        char_loras, char_mults, char_triggers = _collect_loras(
+            {"characters": [char_data]}, bridge_cfg,
+        )
+        if char_triggers:
+            char_prompt = f"{', '.join(char_triggers)}, {char_prompt}"
+
+        inpaint_task = _build_inpaint_task(
+            source_image=current_panel,
+            mask_image=mask_path,
+            prompt=char_prompt,
             negative_prompt=neg_prompt,
-            refs=refs,
             resolution=resolution,
             bridge_cfg=bridge_cfg,
+            activated_loras=char_loras,
+            loras_multipliers=char_mults,
         )
-        tasks.append(task)
-        task_panel_ids.append(pid)
 
-    if not tasks:
-        return results
+        result = _run_single_task_and_collect(
+            inpaint_task, pid, project, bridge_cfg,
+        )
+        if result:
+            current_panel = result
+        else:
+            print(f"[wan2gp]   WARNING: inpaint pass {pass_idx} failed for {char_name}")
+            break
 
-    # Ensure panels/ exists
-    project.panels_dir.mkdir(parents=True, exist_ok=True)
+    return current_panel
 
-    # Build queue.zip, run Wan2GP, collect outputs
+
+def _run_single_task_and_collect(
+    task: dict[str, Any],
+    pid: str,
+    project: Project,
+    bridge_cfg: dict[str, Any],
+) -> Path | None:
+    """Run one task through Wan2GP and copy output to panels/."""
     with tempfile.TemporaryDirectory(prefix="lazycomics_wgp_") as tmpdir:
         tmp = Path(tmpdir)
         queue_path = tmp / "queue.zip"
         wgp_output = tmp / "output"
         wgp_output.mkdir()
-
-        _build_queue_zip(tasks, queue_path)
-        _run_wangp(queue_path, wgp_output, bridge_cfg)
-        generated = _collect_outputs(wgp_output, task_panel_ids, project)
-        results.update(generated)
-
-    return results
+        _build_queue_zip([task], queue_path)
+        try:
+            _run_wangp(queue_path, wgp_output, bridge_cfg)
+        except RuntimeError as e:
+            print(f"[wan2gp]   ERROR: {e}")
+            return None
+        collected = _collect_outputs(wgp_output, [pid], project)
+        return collected.get(pid)
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +366,13 @@ def _load_bridge_config(config: dict[str, Any]) -> dict[str, Any]:
         "base_resolution": cfg_get(config, "wan2gp.base_resolution", 1024),
         "seed": cfg_get(config, "wan2gp.seed", None),
         "cli_args": cfg_get(config, "wan2gp.cli_args", []),
+        "loras_dir": Path(
+            cfg_get(config, "wan2gp.loras_dir", "")
+            or str(Path(wgp_root).expanduser().resolve() / "loras")
+        ).expanduser().resolve(),
+        "inpaint_denoising": cfg_get(config, "wan2gp.inpaint_denoising", 1.0),
+        "inpaint_masking_strength": cfg_get(config, "wan2gp.inpaint_masking_strength", 0.3),
+        "inpaint_mask_expand": cfg_get(config, "wan2gp.inpaint_mask_expand", 0),
     }
 
 
@@ -211,6 +388,8 @@ def _build_wangp_task(
     refs: list[Path],
     resolution: str,
     bridge_cfg: dict[str, Any],
+    activated_loras: list[str] | None = None,
+    loras_multipliers: str = "",
 ) -> dict[str, Any]:
     """Construct one Wan2GP settings dict for a single panel.
 
@@ -230,6 +409,8 @@ def _build_wangp_task(
         "guidance_scale": bridge_cfg.get("guidance_scale", 5),
         "batch_size": 1,
         "seed": bridge_cfg["seed"] if bridge_cfg["seed"] is not None else -1,
+        "activated_loras": activated_loras or [],
+        "loras_multipliers": loras_multipliers,
     }
 
     # Primary ref → image_start (Kontext/Klein latent-stitching input).
@@ -251,6 +432,132 @@ def _build_wangp_task(
         task["video_prompt_type"] = bridge_cfg["video_prompt_type"]
 
     return task
+
+
+def _build_inpaint_task(
+    source_image: Path,
+    mask_image: Path,
+    prompt: str,
+    negative_prompt: str,
+    resolution: str,
+    bridge_cfg: dict[str, Any],
+    activated_loras: list[str] | None = None,
+    loras_multipliers: str = "",
+) -> dict[str, Any]:
+    """Construct a Wan2GP inpaint settings dict.
+
+    Differences from image gen: ``image_mode: 2``,
+    ``video_prompt_type: "VAG"``, source in ``image_start``,
+    mask in ``image_end``, plus ``denoising_strength`` and
+    ``masking_strength``.
+    """
+    return {
+        "model_type": bridge_cfg["architecture"],
+        "image_mode": 2,
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
+        "resolution": resolution,
+        "num_inference_steps": bridge_cfg["default_steps"],
+        "guidance_scale": bridge_cfg.get("guidance_scale", 5),
+        "batch_size": 1,
+        "seed": bridge_cfg["seed"] if bridge_cfg["seed"] is not None else -1,
+        "video_prompt_type": "VAG",
+        "denoising_strength": bridge_cfg.get("inpaint_denoising", 1.0),
+        "masking_strength": bridge_cfg.get("inpaint_masking_strength", 0.3),
+        "mask_expand": bridge_cfg.get("inpaint_mask_expand", 0),
+        "image_start": str(source_image),
+        "image_end": str(mask_image),
+        "activated_loras": activated_loras or [],
+        "loras_multipliers": loras_multipliers,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Mask generation
+# ---------------------------------------------------------------------------
+
+
+def _get_character_region(
+    char_name: str,
+    bubble_lookup: dict[str, dict[str, Any]],
+    total_chars: int,
+    char_index: int,
+) -> tuple[float, float, float, float]:
+    """Return ``(x_frac, y_frac, w_frac, h_frac)`` for a character's region.
+
+    Uses ``bubble_layout`` position if available (character is near their
+    speech bubble). Falls back to even horizontal distribution.
+    """
+    bubble = bubble_lookup.get(char_name)
+    if bubble:
+        # Centre the mask on the bubble's x position, full height
+        cx = bubble["x_frac"] + bubble["width_frac"] / 2
+        region_w = max(0.25, 1.0 / total_chars)
+        x = max(0.0, cx - region_w / 2)
+        return (x, 0.0, min(region_w, 1.0 - x), 1.0)
+
+    # Fallback: even horizontal stripe
+    stripe_w = 1.0 / total_chars
+    x = char_index * stripe_w
+    return (x, 0.0, stripe_w, 1.0)
+
+
+def _generate_mask(
+    width: int,
+    height: int,
+    region: tuple[float, float, float, float],
+    project: Project,
+    pid: str,
+    pass_idx: int,
+) -> Path:
+    """Create a mask PNG: black background, white rectangle at ``region``.
+
+    White = area to repaint. Saved to a temp location within the project
+    so it persists long enough for the queue zip to embed it.
+    """
+    from PIL import Image, ImageDraw
+
+    mask = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(mask)
+
+    x_frac, y_frac, w_frac, h_frac = region
+    x0 = int(x_frac * width)
+    y0 = int(y_frac * height)
+    x1 = int((x_frac + w_frac) * width)
+    y1 = int((y_frac + h_frac) * height)
+    draw.rectangle([x0, y0, x1, y1], fill=255)
+
+    masks_dir = project.panels_dir / "_masks"
+    masks_dir.mkdir(parents=True, exist_ok=True)
+    mask_path = masks_dir / f"{pid}_mask_{pass_idx}.png"
+    mask.save(mask_path)
+    return mask_path
+
+
+def _build_inpaint_prompt(
+    char_data: dict[str, Any],
+    panel: dict[str, Any],
+) -> str:
+    """Build a character-focused prompt for an inpaint pass.
+
+    Combines the character's visual description with the panel's mood
+    and shot context. Falls back to the character identifier if no
+    description is available.
+    """
+    parts: list[str] = []
+
+    desc = char_data.get("visual_description") or char_data.get("identifier", "character")
+    parts.append(desc)
+
+    mood = panel.get("mood")
+    if mood:
+        parts.append(f"{mood} mood")
+
+    action = panel.get("action")
+    if action:
+        parts.append(action)
+
+    return ", ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +629,63 @@ def _collect_refs(refs_dir: Path, panel_id: str) -> list[Path]:
     return refs
 
 
+def _collect_loras(
+    panel_data: dict[str, Any],
+    bridge_cfg: dict[str, Any],
+) -> tuple[list[str], str, list[str]]:
+    """Extract LoRA filenames + weights from panel characters.
+
+    Returns ``(activated_loras, loras_multipliers, trigger_words)`` where:
+    - ``activated_loras`` is a list of ``.safetensors`` filenames
+    - ``loras_multipliers`` is a comma-separated weight string (``""`` if
+      all defaults)
+    - ``trigger_words`` is a list of trigger words to prepend to the prompt
+
+    LoRA files registered at arbitrary paths are copied into Wan2GP's
+    ``loras/`` directory so the headless CLI can find them by filename.
+    """
+    filenames: list[str] = []
+    weights: list[str] = []
+    triggers: list[str] = []
+    loras_dir = bridge_cfg["loras_dir"]
+
+    for char in panel_data.get("characters") or []:
+        lora = char.get("lora")
+        if not lora or not lora.get("path"):
+            continue
+
+        src = Path(lora["path"])
+        if not src.is_file():
+            print(f"[wan2gp] WARNING: LoRA not found: {src}")
+            continue
+
+        # Ensure LoRA is available in Wan2GP's loras dir
+        dst = _ensure_lora(src, loras_dir)
+        filenames.append(dst.name)
+        weights.append(str(lora.get("weight", 0.7)))
+
+        tw = lora.get("trigger_word")
+        if tw:
+            triggers.append(tw)
+
+    multipliers = ",".join(weights) if weights else ""
+    return filenames, multipliers, triggers
+
+
+def _ensure_lora(src: Path, loras_dir: Path) -> Path:
+    """Copy a LoRA file into Wan2GP's loras dir if not already there.
+
+    Returns the destination path (always inside ``loras_dir``).
+    """
+    dst = loras_dir / src.name
+    if dst.is_file() and dst.stat().st_size == src.stat().st_size:
+        return dst  # already present, skip copy
+    loras_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    print(f"[wan2gp] copied LoRA: {src.name} -> {loras_dir}")
+    return dst
+
+
 # ---------------------------------------------------------------------------
 # Queue building
 # ---------------------------------------------------------------------------
@@ -348,6 +712,16 @@ def _build_queue_zip(tasks: list[dict[str, Any]], queue_path: Path) -> None:
                     task_copy["image_start"] = zip_name
                 else:
                     del task_copy["image_start"]
+
+            # Embed image_end (mask for inpaint)
+            if "image_end" in task_copy:
+                src = Path(task_copy["image_end"])
+                if src.is_file():
+                    zip_name = f"task{task_idx}_image_end_0{src.suffix}"
+                    zf.write(src, zip_name)
+                    task_copy["image_end"] = zip_name
+                else:
+                    del task_copy["image_end"]
 
             # Embed image_refs
             if "image_refs" in task_copy:
@@ -383,6 +757,11 @@ def _run_wangp(
 ) -> None:
     """Shell out to Wan2GP CLI inside the Pinokio-managed env.
 
+    Inherits stdout/stderr so Wan2GP's own progress output (step counts,
+    tqdm bars) streams to the caller's terminal in real time. Without
+    this, capture_output buffers the whole run and the terminal looks
+    frozen for the duration of generation.
+
     Raises ``RuntimeError`` if the process exits non-zero.
     """
     cmd = [
@@ -393,25 +772,19 @@ def _run_wangp(
     ]
     cmd.extend(bridge_cfg["cli_args"])
 
-    print(f"[wan2gp] running: {' '.join(cmd)}")
-    print(f"[wan2gp] cwd: {bridge_cfg['wgp_root']}")
+    print(f"[wan2gp]   running: {' '.join(cmd)}", flush=True)
+    start = time.perf_counter()
 
-    result = subprocess.run(
-        cmd,
-        cwd=str(bridge_cfg["wgp_root"]),
-        capture_output=True,
-        text=True,
-    )
+    # stdout/stderr inherited (no capture_output) — output streams live.
+    result = subprocess.run(cmd, cwd=str(bridge_cfg["wgp_root"]))
 
-    if result.stdout:
-        for line in result.stdout.strip().splitlines():
-            print(f"[wan2gp] {line}")
-
+    elapsed = time.perf_counter() - start
     if result.returncode != 0:
-        stderr = result.stderr.strip() if result.stderr else "(no stderr)"
         raise RuntimeError(
-            f"Wan2GP exited with code {result.returncode}:\n{stderr}"
+            f"Wan2GP exited with code {result.returncode} "
+            f"(after {elapsed:.1f}s). See output above for details."
         )
+    print(f"[wan2gp]   done in {elapsed:.1f}s", flush=True)
 
 
 # ---------------------------------------------------------------------------

@@ -53,7 +53,7 @@ dimensions.
 | — | enricher updates | Populate strategy/primary/inpaint fields | ✓ done |
 | — | ref_preparer updates | primary_character + inpaint_order aware | ✓ done |
 | 11 | `wan2gp_bridge.py` | Call Wan2GP CLI → panel PNGs | ✓ done |
-| 12 | `upscaler.py` | Real-ESRGAN on assembled pages | next |
+| 12 | `upscaler.py` | Real-ESRGAN on assembled pages | ✓ done |
 | 13 | `ai_toolkit_bridge.py` | Call AI Toolkit → trained LoRAs | pending |
 
 These are the Pinokio-launched heavy bridges. The Phase 1 pipeline treats
