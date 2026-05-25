@@ -1,0 +1,85 @@
+{
+  "panel_id": "page_7_panel_5",
+  "page_index": 6,
+  "panel_index": 4,
+  "aspect_ratio": 1.3333333333333333,
+  "pixel_rect": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "bleed_edges": [
+    "bottom",
+    "left"
+  ],
+  "loc_identifier": "THE_OFFICE",
+  "loc_description": "modern city hedge fund office, interior, main open-plan area filled with cubicles, glowing monitors showing market data, glass-walled manager's office at the back, London skyline visible through floor-to-ceiling windows",
+  "loc_reference_images": [
+    "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\locations\\THE_OFFICE\\references\\THE_OFFICE.png"
+  ],
+  "characters": [
+    {
+      "identifier": "GERALD",
+      "visual_description": "young pale white male hedge fund analyst, dressed in a suit but looks a bit sloppy, tie loose, hair slightly messy, faint dark circles under his eyes",
+      "reference_images": [
+        "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\characters\\GERALD\\references\\GERALD.png"
+      ],
+      "lora": null
+    },
+    {
+      "identifier": "YUKI",
+      "visual_description": "young Japanese woman, cool and trendy business vibe, sharp tailored office wear, modern haircut, perceptive eyes",
+      "reference_images": [
+        "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\characters\\YUKI\\references\\YUKI.png"
+      ],
+      "lora": null
+    }
+  ],
+  "primary_character": "GERALD",
+  "char_generation_strategy": "multi_inpaint",
+  "inpaint_order": [
+    "GERALD",
+    "YUKI"
+  ],
+  "occlusion_order": [],
+  "shot_hint": "over-the-shoulder from behind David spying on them",
+  "mood": "spy-comedy",
+  "action": "Gerald and Yuki quietly talk near the vending machine.",
+  "dialogue_lines": [
+    {
+      "character": "YUKI",
+      "text": "David is absolutely spying on us.",
+      "bubble_type": "whisper"
+    },
+    {
+      "character": "GERALD",
+      "text": "I know.",
+      "bubble_type": "whisper"
+    }
+  ],
+  "caption_boxes": [],
+  "sfx_lines": [],
+  "bubble_layout": [
+    {
+      "character": "GERALD",
+      "x_frac": 0.0,
+      "y_frac": 0.0,
+      "width_frac": 0.5,
+      "height_frac": 1.0
+    },
+    {
+      "character": "YUKI",
+      "x_frac": 0.5,
+      "y_frac": 0.0,
+      "width_frac": 0.5,
+      "height_frac": 1.0
+    }
+  ],
+  "composition_flags": {},
+  "panel_context": {},
+  "pose_ref": null,
+  "lora_stack": [],
+  "prompt": null,
+  "negative_prompt": null
+}

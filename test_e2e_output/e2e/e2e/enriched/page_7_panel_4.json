@@ -1,0 +1,63 @@
+{
+  "panel_id": "page_7_panel_4",
+  "page_index": 6,
+  "panel_index": 3,
+  "aspect_ratio": 0.6666666666666666,
+  "pixel_rect": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "bleed_edges": [
+    "right"
+  ],
+  "loc_identifier": "THE_OFFICE",
+  "loc_description": "modern city hedge fund office, interior, main open-plan area filled with cubicles, glowing monitors showing market data, glass-walled manager's office at the back, London skyline visible through floor-to-ceiling windows",
+  "loc_reference_images": [
+    "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\locations\\THE_OFFICE\\references\\THE_OFFICE.png"
+  ],
+  "characters": [
+    {
+      "identifier": "DAVID",
+      "visual_description": "older white man, grey beard, tanned skin, sharp business suit, slick and well-groomed, reading glasses, watchful narrow eyes",
+      "reference_images": [
+        "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\characters\\DAVID\\references\\DAVID.png"
+      ],
+      "lora": null
+    }
+  ],
+  "primary_character": "DAVID",
+  "char_generation_strategy": "single",
+  "inpaint_order": [
+    "DAVID"
+  ],
+  "occlusion_order": [],
+  "shot_hint": "medium shot triumphantly holding garlic bread from the cafeteria",
+  "mood": "ridiculous determination",
+  "action": "David raises a tray of garlic bread triumphantly.",
+  "dialogue_lines": [
+    {
+      "character": "DAVID",
+      "text": "Tomorrow we test him.",
+      "bubble_type": "speech"
+    }
+  ],
+  "caption_boxes": [],
+  "sfx_lines": [],
+  "bubble_layout": [
+    {
+      "character": "DAVID",
+      "x_frac": 0.0,
+      "y_frac": 0.0,
+      "width_frac": 1.0,
+      "height_frac": 1.0
+    }
+  ],
+  "composition_flags": {},
+  "panel_context": {},
+  "pose_ref": null,
+  "lora_stack": [],
+  "prompt": null,
+  "negative_prompt": null
+}

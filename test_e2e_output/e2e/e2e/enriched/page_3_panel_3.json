@@ -1,0 +1,70 @@
+{
+  "panel_id": "page_3_panel_3",
+  "page_index": 2,
+  "panel_index": 2,
+  "aspect_ratio": 0.4444444444444444,
+  "pixel_rect": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "bleed_edges": [
+    "bottom",
+    "left"
+  ],
+  "loc_identifier": "THE_OFFICE",
+  "loc_description": "modern city hedge fund office, interior, main open-plan area filled with cubicles, glowing monitors showing market data, glass-walled manager's office at the back, London skyline visible through floor-to-ceiling windows",
+  "loc_reference_images": [
+    "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\locations\\THE_OFFICE\\references\\THE_OFFICE.png"
+  ],
+  "characters": [
+    {
+      "identifier": "RANJEET",
+      "visual_description": "young Indian man, dressed in only a shirt and trousers (no suit or tie), relaxed and friendly demeanour, slight stubble, easygoing posture",
+      "reference_images": [
+        "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\characters\\RANJEET\\references\\RANJEET.png"
+      ],
+      "lora": null
+    }
+  ],
+  "primary_character": "RANJEET",
+  "char_generation_strategy": "single",
+  "inpaint_order": [
+    "RANJEET"
+  ],
+  "occlusion_order": [],
+  "shot_hint": "medium shot spinning in office chair eating crisps",
+  "mood": "absurdly casual",
+  "action": "Ranjeet scrolls memes instead of working.",
+  "dialogue_lines": [
+    {
+      "character": "RANJEET",
+      "text": "If the economy collapses maybe we all become forest goblins.",
+      "bubble_type": "speech"
+    }
+  ],
+  "caption_boxes": [],
+  "sfx_lines": [
+    {
+      "text": "CRONCH",
+      "color": "#444444",
+      "position": "top-right"
+    }
+  ],
+  "bubble_layout": [
+    {
+      "character": "RANJEET",
+      "x_frac": 0.0,
+      "y_frac": 0.0,
+      "width_frac": 1.0,
+      "height_frac": 1.0
+    }
+  ],
+  "composition_flags": {},
+  "panel_context": {},
+  "pose_ref": null,
+  "lora_stack": [],
+  "prompt": null,
+  "negative_prompt": null
+}

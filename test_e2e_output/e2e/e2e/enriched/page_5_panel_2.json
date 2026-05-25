@@ -1,0 +1,89 @@
+{
+  "panel_id": "page_5_panel_2",
+  "page_index": 4,
+  "panel_index": 1,
+  "aspect_ratio": 1.0,
+  "pixel_rect": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "bleed_edges": [
+    "left"
+  ],
+  "loc_identifier": "THE_BAR",
+  "loc_description": "dark and dingy after-work bar, dim warm lighting, neon signs glowing through smoke, worn leather booths, rain-streaked windows, bottles lining the back wall",
+  "loc_reference_images": [
+    "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\locations\\THE_BAR\\references\\THE_BAR.png"
+  ],
+  "characters": [
+    {
+      "identifier": "YUKI",
+      "visual_description": "young Japanese woman, cool and trendy business vibe, sharp tailored office wear, modern haircut, perceptive eyes",
+      "reference_images": [
+        "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\characters\\YUKI\\references\\YUKI.png"
+      ],
+      "lora": null
+    },
+    {
+      "identifier": "GERALD",
+      "visual_description": "young pale white male hedge fund analyst, dressed in a suit but looks a bit sloppy, tie loose, hair slightly messy, faint dark circles under his eyes",
+      "reference_images": [
+        "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\characters\\GERALD\\references\\GERALD.png"
+      ],
+      "lora": null
+    }
+  ],
+  "primary_character": "YUKI",
+  "char_generation_strategy": "multi_inpaint",
+  "inpaint_order": [
+    "YUKI",
+    "GERALD"
+  ],
+  "occlusion_order": [],
+  "shot_hint": "closeup two-shot across the table",
+  "mood": "intimate, sincere",
+  "action": "Yuki studies Gerald carefully.",
+  "dialogue_lines": [
+    {
+      "character": "YUKI",
+      "text": "You are weird, Gerald.",
+      "bubble_type": "speech"
+    },
+    {
+      "character": "GERALD",
+      "text": "That narrows it down.",
+      "bubble_type": "speech"
+    },
+    {
+      "character": "YUKI",
+      "text": "No. Like immortal weird.",
+      "bubble_type": "speech"
+    }
+  ],
+  "caption_boxes": [],
+  "sfx_lines": [],
+  "bubble_layout": [
+    {
+      "character": "YUKI",
+      "x_frac": 0.0,
+      "y_frac": 0.0,
+      "width_frac": 0.5,
+      "height_frac": 1.0
+    },
+    {
+      "character": "GERALD",
+      "x_frac": 0.5,
+      "y_frac": 0.0,
+      "width_frac": 0.5,
+      "height_frac": 1.0
+    }
+  ],
+  "composition_flags": {},
+  "panel_context": {},
+  "pose_ref": null,
+  "lora_stack": [],
+  "prompt": null,
+  "negative_prompt": null
+}

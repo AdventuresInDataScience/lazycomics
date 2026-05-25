@@ -422,3 +422,93 @@ Per-scene seed reuse
 Explicit bubble optimisation layer
 Fixed minimum font size
 Generate all characters in one pass where possible
+
+---
+
+## Phase 3 — additional findings from full e2e run (2026-05-25)
+
+The 9-page test comic ran end-to-end after the `image_guide`/`image_mask`
+inpaint fix and `_loaded_queue_cache` filter (commit pending). Findings
+below are on top of the original six "Phase 2 Complete but…" issues.
+
+### Still broken (carry into Phase 3 work)
+
+* **Character drift across panels.** Same character, same ref image,
+  same fixed seed — hair colour, face shape, age all visibly change
+  between panels. Style refs and character refs are present and
+  consistent at registration time. Most likely fixed by § 14.6 (LoRA
+  training) — refs alone aren't strong enough conditioning for Klein. Keen to still look at other options to improve this before resortign to Loras (due to the time commitment and gpu resource commitment required by end users. May not be faesible for all. Need strong brainstorm on other ways to strengthen consistency and adherance to prompy. Perhaps full Flux is the only option? With smal panel sizes to save time - leanign heavier on ESRGAN/Real-ESRGAN etc)
+* **Art style drift.** Same comment as above for style consistency
+  despite a registered style reference image that all character/loc refs
+  visually match. Klein's reference-weighting is too soft.
+* **Inpaint structural break persists.** Some multi-character panels
+  still come out as two visually disjointed halves even with
+  `inpaint_denoising: 0.65` and the corrected `image_guide`/`image_mask`
+  fields. Maps to § 14.4 (character-shaped masks) — rectangular masks
+  produce hard seams in busy panels.
+* **Wan2GP painting speech bubbles INTO the generated image.** New
+  observation. Some generated panels include cartoon speech bubbles
+  drawn directly into the artwork, before `text_renderer` runs. The
+  panel ends up with two bubble layers — Wan2GP's painted-in bubble plus
+  ours. Likely cause: comic-style prompt + character dialogue context
+  pushes the model toward "comic with bubbles". **Fix path:** add
+  explicit "no speech bubbles, no text, no captions" to the negative
+  prompt in `prompt_builder` or `wan2gp_bridge`. Cheap; should land in
+  § 14.0-style pre-Phase-3 patches.
+* **Panel aspect-ratio bug confirmed.** Audit of `test_e2e_output/e2e/
+  e2e/panels/*.png` shows **every panel is landscape ~1.33 ratio**,
+  but enriched JSON for the splash panel (`page_1_panel_1.json`)
+  declares `aspect_ratio: 0.6666` (portrait, correct). Wan2GP is
+  ignoring or transposing our `resolution` field. Already captured as
+  § 14.1; this latest run confirms it's still happening and is the
+  single biggest visual issue.
+* **e2e test fails.** e2e test fails. terminal output truncated but partial log at `pytest_terminal_output.txt` showing failure. In particular, no upscaling evident, and no comilation into cbz
+* **Font size in captions and speech bubbles is slightly too big.** Idealy set default smaller, but expose font size in config
+* **Bubble order totaly incorrect.** NO sensible preservation of reading order as presented in cmbl. Bubbles random and incorrectly placed - incohesive to story. Is the negative space being implemented? Ie logical spaces to leave for text, and logical pickup of these areas to place future bubbles? This fix needs brainstorming
+* **Thought bubbles much too aggressive.** Curly outer shape cuttin gout most of the text - result looks clipped, amateurish and unreadable
+* **Speech bubble tails still far too long** Should be very short as per normal comics. Most generated bubbles have very long tails in the test panels. 
+* **Some errors in renders** Eg images with subjects eyes missing/glazed over, and other small errors/discrepancies. 
+
+
+### Stay-resident Wan2GP worker — added as § 14.10
+
+A new Phase 3 item: build a small daemon (~50 LOC) that imports `wgp.py`
+once, loads Flux 2 Klein + Qwen3 8B once, and accepts queue tasks over
+stdin. Currently every `_run_wangp` call cold-loads ~18 GB of weights
+(~25s per load). Worse, every multi-inpaint pass spawns its own
+subprocess — base + N inpaint passes per multi-character panel = N+1
+full reloads.
+
+**Why this is Phase-3 work, not a "nice to have":** Phase 3 is the
+quality-tuning phase. Every § 14.x fix needs to be validated against the
+e2e test. On the current comic that's ~10 model loads per run = ~4
+minutes of pure overhead per iteration, on top of actual generation
+time. Without the worker, each Phase 3 attempt costs ~10 minutes of
+real-time waiting. With it, the same iteration is generation-bound and
+significantly faster, which directly translates to more attempts per
+session and faster convergence on the visual fixes.
+
+Detailed implementation lives in `Implementation_plan.md` § 14.10. Risk
+is the unknown — verify Wan2GP's task-running entry point is callable
+repeatedly before committing to the work.
+
+### Image-size audit (sanity check)
+
+Quick check of the test output sizes:
+
+* **Pages:** all 10 page PNGs are 533×800 (ratio 0.666 portrait). Matches
+  the test's `page_height_px=800` × `us-comic` aspect resolved to 2:3.
+  Note the test uses 800 for speed; production default is 3000 — pages
+  will be 2000×3000 in real runs.
+* **Panels:** wrong shape (see "Panel aspect-ratio bug confirmed" above).
+  Long-edge is also inconsistent — some panels are 1184×880 (larger than
+  the requested `base_resolution: 1024`), others 784×576 (smaller).
+  Suggests Wan2GP / Flux Klein is snapping to its own preferred buckets
+  and our `resolution` param is advisory at best.
+* **Panel shape variety:** the 9-page CBML covers `preset:splash`,
+  `preset:feature-top`, `grid:3x2`, `preset:wide-bottom`, `grid:2x3`,
+  `preset:feature-left`, `grid:3x3`, `spread:2 grid:2x2`, and
+  `preset:strip-3` — that's good layout variety. The visual "samey"
+  feel of the output is the aspect-ratio bug (§ 14.1), not lack of
+  CBML diversity. Once § 14.1 lands, expect splash/feature/spread panels
+  to look properly different from grid panels.

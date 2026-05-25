@@ -2,7 +2,7 @@
   "panel_id": "page_2_panel_1",
   "page_index": 1,
   "panel_index": 0,
-  "aspect_ratio": 0.6666666666666666,
+  "aspect_ratio": 1.3333333333333333,
   "pixel_rect": [
     0,
     0,
@@ -11,68 +11,103 @@
   ],
   "bleed_edges": [
     "left",
+    "right",
     "top"
   ],
-  "loc_identifier": "steampunk_alley",
-  "loc_description": "narrow steampunk alley, brass pipes, yellow gaslight, cobblestones",
+  "loc_identifier": "THE_OFFICE",
+  "loc_description": "modern city hedge fund office, interior, main open-plan area filled with cubicles, glowing monitors showing market data, glass-walled manager's office at the back, London skyline visible through floor-to-ceiling windows",
   "loc_reference_images": [
-    "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\locations\\steampunk_alley\\references\\alley_ref.png"
+    "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\locations\\THE_OFFICE\\references\\THE_OFFICE.png"
   ],
   "characters": [
     {
-      "identifier": "NOVA",
-      "visual_description": "young woman, short blue hair, leather jacket, cyberpunk look",
+      "identifier": "GERALD",
+      "visual_description": "young pale white male hedge fund analyst, dressed in a suit but looks a bit sloppy, tie loose, hair slightly messy, faint dark circles under his eyes",
       "reference_images": [
-        "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\characters\\NOVA\\references\\nova_ref.png"
+        "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\characters\\GERALD\\references\\GERALD.png"
       ],
       "lora": null
     },
     {
-      "identifier": "REX",
-      "visual_description": "grizzled older man, grey beard, trenchcoat, scarred face",
+      "identifier": "YUKI",
+      "visual_description": "young Japanese woman, cool and trendy business vibe, sharp tailored office wear, modern haircut, perceptive eyes",
       "reference_images": [
-        "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\characters\\REX\\references\\rex_ref.png"
+        "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\characters\\YUKI\\references\\YUKI.png"
+      ],
+      "lora": null
+    },
+    {
+      "identifier": "RANJEET",
+      "visual_description": "young Indian man, dressed in only a shirt and trousers (no suit or tie), relaxed and friendly demeanour, slight stubble, easygoing posture",
+      "reference_images": [
+        "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\characters\\RANJEET\\references\\RANJEET.png"
+      ],
+      "lora": null
+    },
+    {
+      "identifier": "DAVID",
+      "visual_description": "older white man, grey beard, tanned skin, sharp business suit, slick and well-groomed, reading glasses, watchful narrow eyes",
+      "reference_images": [
+        "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\characters\\DAVID\\references\\DAVID.png"
       ],
       "lora": null
     }
   ],
-  "primary_character": "NOVA",
+  "primary_character": "GERALD",
   "char_generation_strategy": "multi_inpaint",
   "inpaint_order": [
-    "NOVA",
-    "REX"
+    "GERALD",
+    "YUKI",
+    "RANJEET",
+    "DAVID"
   ],
   "occlusion_order": [],
-  "shot_hint": "medium two-shot",
-  "mood": "confrontational",
-  "action": "They face each other across the narrow alley.",
-  "dialogue_lines": [
+  "shot_hint": "wide establishing shot of an open-plan hedge fund office with glowing monitors and London skyline windows",
+  "mood": "energetic, corporate chaos, comedic tension",
+  "action": "The Office buzzes with market panic. Traders yell. Phones ring. Coffee flows constantly. Gerald glides unnaturally calmly through the chaos holding a perfectly untouched coffee.",
+  "dialogue_lines": [],
+  "caption_boxes": [
     {
-      "character": "NOVA",
-      "text": "You shouldn't have come here.",
-      "bubble_type": "speech"
-    },
-    {
-      "character": "REX",
-      "text": "Neither should you.",
-      "bubble_type": "speech"
+      "text": "Monday. 8:14 AM.",
+      "bg_color": "#111111",
+      "text_color": "#88ddff",
+      "position": "top-left"
     }
   ],
-  "caption_boxes": [],
-  "sfx_lines": [],
+  "sfx_lines": [
+    {
+      "text": "RING RING RING",
+      "color": "#222222",
+      "position": "bottom-center"
+    }
+  ],
   "bubble_layout": [
     {
-      "character": "NOVA",
+      "character": "GERALD",
       "x_frac": 0.0,
       "y_frac": 0.0,
-      "width_frac": 0.5,
+      "width_frac": 0.25,
       "height_frac": 1.0
     },
     {
-      "character": "REX",
+      "character": "YUKI",
+      "x_frac": 0.25,
+      "y_frac": 0.0,
+      "width_frac": 0.25,
+      "height_frac": 1.0
+    },
+    {
+      "character": "RANJEET",
       "x_frac": 0.5,
       "y_frac": 0.0,
-      "width_frac": 0.5,
+      "width_frac": 0.25,
+      "height_frac": 1.0
+    },
+    {
+      "character": "DAVID",
+      "x_frac": 0.75,
+      "y_frac": 0.0,
+      "width_frac": 0.25,
       "height_frac": 1.0
     }
   ],

@@ -447,9 +447,14 @@ def _build_inpaint_task(
     """Construct a Wan2GP inpaint settings dict.
 
     Differences from image gen: ``image_mode: 2``,
-    ``video_prompt_type: "VAG"``, source in ``image_start``,
-    mask in ``image_end``, plus ``denoising_strength`` and
+    ``video_prompt_type: "VAG"``, source in ``image_guide``,
+    mask in ``image_mask``, plus ``denoising_strength`` and
     ``masking_strength``.
+
+    The field names follow Wan2GP's ``ATTACHMENT_KEYS`` (wgp.py:142).
+    Using ``image_start``/``image_end`` here causes Wan2GP to reject the
+    task with "You must provide a Control Image" because ``V`` in
+    ``video_prompt_type`` requires ``image_guide``.
     """
     return {
         "model_type": bridge_cfg["architecture"],
@@ -458,15 +463,15 @@ def _build_inpaint_task(
         "negative_prompt": negative_prompt,
         "resolution": resolution,
         "num_inference_steps": bridge_cfg["default_steps"],
-        "guidance_scale": bridge_cfg.get("guidance_scale", 5),
+        "guidance_scale": bridge_cfg.get("guidance_scale", 3.5),
         "batch_size": 1,
         "seed": bridge_cfg["seed"] if bridge_cfg["seed"] is not None else -1,
         "video_prompt_type": "VAG",
-        "denoising_strength": bridge_cfg.get("inpaint_denoising", 1.0),
+        "denoising_strength": bridge_cfg.get("inpaint_denoising", 0.65),
         "masking_strength": bridge_cfg.get("inpaint_masking_strength", 0.3),
         "mask_expand": bridge_cfg.get("inpaint_mask_expand", 0),
-        "image_start": str(source_image),
-        "image_end": str(mask_image),
+        "image_guide": str(source_image),
+        "image_mask": str(mask_image),
         "activated_loras": activated_loras or [],
         "loras_multipliers": loras_multipliers,
     }
@@ -703,25 +708,18 @@ def _build_queue_zip(tasks: list[dict[str, Any]], queue_path: Path) -> None:
         for task_idx, task in enumerate(tasks):
             task_copy = dict(task)
 
-            # Embed image_start
-            if "image_start" in task_copy:
-                src = Path(task_copy["image_start"])
-                if src.is_file():
-                    zip_name = f"task{task_idx}_image_start_0{src.suffix}"
-                    zf.write(src, zip_name)
-                    task_copy["image_start"] = zip_name
-                else:
-                    del task_copy["image_start"]
-
-            # Embed image_end (mask for inpaint)
-            if "image_end" in task_copy:
-                src = Path(task_copy["image_end"])
-                if src.is_file():
-                    zip_name = f"task{task_idx}_image_end_0{src.suffix}"
-                    zf.write(src, zip_name)
-                    task_copy["image_end"] = zip_name
-                else:
-                    del task_copy["image_end"]
+            # Embed single-image attachment keys. image_start/end are the
+            # base-pass inputs (Kontext); image_guide/mask are the inpaint
+            # inputs (control image + mask). See ATTACHMENT_KEYS in wgp.py.
+            for key in ("image_start", "image_end", "image_guide", "image_mask"):
+                if key in task_copy:
+                    src = Path(task_copy[key])
+                    if src.is_file():
+                        zip_name = f"task{task_idx}_{key}_0{src.suffix}"
+                        zf.write(src, zip_name)
+                        task_copy[key] = zip_name
+                    else:
+                        del task_copy[key]
 
             # Embed image_refs
             if "image_refs" in task_copy:
@@ -802,11 +800,16 @@ def _collect_outputs(
     Wan2GP writes outputs sequentially (task order matches panel_ids
     order). We glob for image files, sort them, and pair with panel_ids
     positionally. If the count doesn't match, we log and pair what we can.
+
+    Wan2GP extracts queue contents into ``output/_loaded_queue_cache/``
+    (wgp.py:1535) — we must skip that directory, otherwise the input
+    images get paired as if they were generated outputs.
     """
     output_images = sorted(
         p for p in wgp_output_dir.rglob("*")
         if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
         and p.is_file()
+        and "_loaded_queue_cache" not in p.parts
     )
 
     if len(output_images) != len(panel_ids):

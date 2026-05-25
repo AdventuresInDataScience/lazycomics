@@ -853,6 +853,7 @@ remaining structural fixes.
 5. § 14.5 Bubble non-overlap pass + reading-order indicators
 6. § 14.6 LoRA training pipeline (`ai_toolkit_bridge.py`)
 7. § 14.7 SAM-based segmentation (investment, only if 14.4 falls short)
+8. § 14.10 Stay-resident Wan2GP worker — iteration-speed investment (see rationale below)
 
 Each subsection lists ordered steps. Cross-references use `§ N.M` form so this
 section can stand alone when handing off.
@@ -1236,6 +1237,97 @@ the letterbox bands disappear.
 **Until § 14.1 lands**, the user may want to revert the default to
 `cover`. The knob makes that a one-line YAML edit; no code change
 needed.
+
+---
+
+### 14.10 Stay-resident Wan2GP worker (Option B)
+
+**Symptom.** Every call to `_run_wangp` spawns a fresh `python wgp.py
+--process queue.zip` subprocess. Each subprocess cold-loads Flux 2 Klein
+9B (~9 GB) + Qwen3 8B text encoder (~9 GB) into VRAM before running the
+queue, then tears the whole thing down. Observed load time per cold start
+is ~20–30s on an RTX-class GPU.
+
+The single-panel batch amortises this nicely (one load, N panels), but
+**every multi-inpaint pass is a separate subprocess** — base pass + each
+inpaint pass = one full reload each. On a comic with several
+multi-character panels this dominates wall-clock time.
+
+**Why this matters now.** Iteration. Phase 3 work (§ 14.1, § 14.4,
+§ 14.5) means re-running the e2e test repeatedly. With ~10 multi-inpaint
+passes per run and ~25s of pure model-load per pass, that's **~4 minutes
+of pure loading overhead per iteration**, on top of actual generation
+time. This compounds badly as Phase 3 settles into "tweak and re-run"
+cycles.
+
+**Fix — small worker daemon in the Wan2GP env.**
+
+A ~50-line Python script lives in `wgp_root/lazycomics_worker.py`. It
+imports `wgp.py`'s task-generation entry point, loads the model once at
+startup, and then reads JSON tasks from stdin in a loop, writing one
+JSON status line to stdout per completion. The lazycomics bridge spawns
+**one** subprocess per `generate_panels` call (or even per session), pipes
+queue tasks in, and reads results out.
+
+**Architecture sketch:**
+
+```
+lazycomics                          wgp_root/lazycomics_worker.py
+─────────────────                   ─────────────────────────────
+generate_panels()                   load model once
+  ↓ spawn worker (one time)         ↓ read line from stdin
+  ↓ send task as JSON               ↓ run task
+  ↓ wait for result line            ↓ write result line to stdout
+  ↓ send next task                  ↓ loop
+  ↓ ...
+  ↓ send {"shutdown": true}         ↓ exit
+```
+
+**Implementation steps:**
+
+1. Identify Wan2GP's task-running internal entry point (call it
+   `wgp.run_task(task_dict, output_dir)` for now — the actual function
+   sits inside `wgp.py` around the `--process` handling). Confirm it can
+   be called repeatedly without state pollution.
+2. Write `lazycomics_worker.py` in the Wan2GP repo (or as a sibling
+   file we drop in): startup loads model, then loops reading
+   newline-delimited JSON from stdin, calling `run_task`, emitting
+   `{"status": "ok", "outputs": [...]}` per task.
+3. Refactor `_run_wangp` into two paths:
+   - **Cold path** (current behaviour) — fallback for when the worker
+     can't be spawned. Keep it for robustness.
+   - **Warm path** — bridge maintains a long-lived `subprocess.Popen` of
+     the worker, sends queue tasks via stdin, parses results from stdout.
+4. Decide lifecycle. Options: (a) per-`generate_panels()` call —
+   simplest, still amortises across all panels in one run; (b)
+   process-lifetime singleton — fastest but couples to caller's process
+   lifetime. Start with (a).
+5. Health checks. If the worker crashes (subprocess dies mid-task or
+   stdout returns malformed JSON), fall back to cold-path subprocess
+   spawning for the remainder of that `generate_panels` call.
+
+**Cost & risk.**
+
+* Code volume: ~50 LOC in the worker + ~60 LOC of warm-path logic in
+  the bridge, plus tests. Half a day of focused work.
+* Risk: `wgp.py` may not have a clean repeatable entry point — model
+  state may leak between calls (cached embeddings, schedulers in
+  partially-stepped state). Spend the first half-hour of work verifying
+  this before committing to the implementation.
+* Dependency: lives inside the Wan2GP repo as a sibling script. When
+  Pinokio updates Wan2GP, the worker may need re-syncing. Mitigation:
+  pin the supported Wan2GP version range and document a one-line
+  re-install command.
+
+**Expected payoff.** ~1 model load per `generate_panels` call instead
+of (1 + multi-inpaint-panel-count + total-inpaint-pass-count). On the
+current test comic that's 1 load instead of ~10, saving 3–4 minutes per
+e2e iteration. Larger savings on longer comics.
+
+**Defer if.** § 14.1, § 14.4, § 14.5 land cleanly and stop requiring
+heavy re-runs. The cost is iteration time, not output quality — there's
+no end-user-visible artifact difference. If iteration cadence drops
+naturally, this stops being worth the investment.
 
 ---
 

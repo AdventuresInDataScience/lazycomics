@@ -1,0 +1,69 @@
+{
+  "panel_id": "page_5_panel_3",
+  "page_index": 4,
+  "panel_index": 2,
+  "aspect_ratio": 1.0,
+  "pixel_rect": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "bleed_edges": [
+    "right"
+  ],
+  "loc_identifier": "THE_BAR",
+  "loc_description": "dark and dingy after-work bar, dim warm lighting, neon signs glowing through smoke, worn leather booths, rain-streaked windows, bottles lining the back wall",
+  "loc_reference_images": [
+    "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\locations\\THE_BAR\\references\\THE_BAR.png"
+  ],
+  "characters": [
+    {
+      "identifier": "RANJEET",
+      "visual_description": "young Indian man, dressed in only a shirt and trousers (no suit or tie), relaxed and friendly demeanour, slight stubble, easygoing posture",
+      "reference_images": [
+        "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\characters\\RANJEET\\references\\RANJEET.png"
+      ],
+      "lora": null
+    }
+  ],
+  "primary_character": "RANJEET",
+  "char_generation_strategy": "single",
+  "inpaint_order": [
+    "RANJEET"
+  ],
+  "occlusion_order": [],
+  "shot_hint": "medium shot lifting a glowing cocktail",
+  "mood": "comedic",
+  "action": "Ranjeet dramatically lifts a glowing green cocktail.",
+  "dialogue_lines": [
+    {
+      "character": "RANJEET",
+      "text": "Behold. The Bloomberg Terminal.",
+      "bubble_type": "speech"
+    }
+  ],
+  "caption_boxes": [],
+  "sfx_lines": [
+    {
+      "text": "FZZZZT",
+      "color": "#00aa00",
+      "position": "center"
+    }
+  ],
+  "bubble_layout": [
+    {
+      "character": "RANJEET",
+      "x_frac": 0.0,
+      "y_frac": 0.0,
+      "width_frac": 1.0,
+      "height_frac": 1.0
+    }
+  ],
+  "composition_flags": {},
+  "panel_context": {},
+  "pose_ref": null,
+  "lora_stack": [],
+  "prompt": null,
+  "negative_prompt": null
+}
