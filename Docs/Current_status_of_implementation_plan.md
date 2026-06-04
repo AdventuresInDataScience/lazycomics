@@ -418,6 +418,8 @@ Lower CFG
 Lower inpaint denoise (0.15–0.35)
 Smaller masks and specific bubble logic to handle both character order, tail placement, and negative space in the image in a suitable place for future speach bubbles.Eg using rt-detrv2 or SAM.
 Stronger style image weighting?
+KV caching to improve consistency across generations.
+Inpainting improvements: duo prompts ("part of a duo", "hugging"), expand bounding boxes, alpha compositing/soft gradients on masks, and global varnish (denoise/smooth).
 Per-scene seed reuse
 Explicit bubble optimisation layer
 Fixed minimum font size

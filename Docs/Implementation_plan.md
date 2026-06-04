@@ -493,6 +493,7 @@ Dependencies: diffusers, torch
 - Accepts target resolution from panel aspect ratio + max_resolution setting
 - Applies style + character conditioning (LoRA or IP-Adapter)
 - Applies ControlNet conditioning if available
+- Uses KV caching to reuse weights and improve consistency across generations
 - Returns raw PIL Image
 
 Resolution: SDXL native 1024x1024. Rectangular panels via aspect ratio bucketing
@@ -506,11 +507,13 @@ Only invoked for multi_inpaint strategy panels.
 
 Per additional character:
 1. Run SAM, prompted with character region hint from bubble region assignment
-2. Generate binary mask
+2. Generate binary mask. Try expanding bounding boxes for better context, and use alpha compositing (soft gradients/blurred masks) to avoid hard seams.
 3. Extract depth map -> ControlNet depth conditioning
-4. Run inpaint pass: character LoRA/IP-Adapter + depth ControlNet + mask
+4. Run inpaint pass: character LoRA/IP-Adapter + depth ControlNet + mask. Incorporate "duo prompts" (e.g., "this is part of a duo", "hugging") to improve multi-character interaction.
 5. Composite inpainted region back onto panel image
 6. Repeat for next character in inpaint_order
+
+After all characters are inpainted, apply a "global varnish" pass (e.g. a low-denoising img2img pass) to denoise and smooth out any visible seams, bringing the panel together visually.
 
 Occlusion ordering: foreground characters inpainted last.
 
