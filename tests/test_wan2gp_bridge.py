@@ -19,6 +19,8 @@ sys.path.insert(0, str(SRC))
 
 from lazycomics.project import create_project  # noqa: E402
 from lazycomics.wan2gp_bridge import (  # noqa: E402
+    _DEFAULT_INPAINT_DENOISING,
+    _DEFAULT_INPAINT_MASKING_STRENGTH,
     _build_inpaint_task,
     _build_inpaint_prompt,
     _build_panel_task,
@@ -33,6 +35,7 @@ from lazycomics.wan2gp_bridge import (  # noqa: E402
     _get_character_region,
     _load_bridge_config,
     _read_prompt,
+    _warn_on_resolution_mismatch,
     generate_panels,
 )
 
@@ -182,6 +185,50 @@ def test_resolution_extreme_portrait():
     assert int(h) == 1024
     assert int(w) % 64 == 0
     assert int(w) < int(h)
+
+
+# ---------------------------------------------------------------------------
+# _warn_on_resolution_mismatch (image_start vs requested resolution tripwire)
+# ---------------------------------------------------------------------------
+
+
+def _write_img(path, w, h):
+    from PIL import Image
+    Image.new("RGB", (w, h), (128, 128, 128)).save(path)
+
+
+def test_no_warning_when_image_start_matches_resolution(capsys=None):
+    import io
+    from contextlib import redirect_stdout
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "ref.png"
+        _write_img(p, 704, 1024)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            _warn_on_resolution_mismatch(p, "704x1024", "p1")
+        assert "WARNING" not in buf.getvalue()
+
+
+def test_warning_when_image_start_diverges_from_resolution():
+    import io
+    from contextlib import redirect_stdout
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "ref.png"
+        _write_img(p, 848, 848)  # the classic wrong-shape symptom
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            _warn_on_resolution_mismatch(p, "704x1024", "p1")
+        out = buf.getvalue()
+        assert "WARNING" in out and "848x848" in out and "704x1024" in out
+
+
+def test_warning_silent_on_missing_file():
+    import io
+    from contextlib import redirect_stdout
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        _warn_on_resolution_mismatch(Path("/nonexistent/ref.png"), "704x1024", "p1")
+    assert buf.getvalue() == ""  # diagnostics must never crash or spam
 
 
 # ---------------------------------------------------------------------------
@@ -563,8 +610,8 @@ def test_inpaint_task_fields():
     )
     assert task["image_mode"] == 2
     assert task["video_prompt_type"] == "VAG"
-    assert task["denoising_strength"] == 0.65
-    assert task["masking_strength"] == 0.3
+    assert task["denoising_strength"] == _DEFAULT_INPAINT_DENOISING
+    assert task["masking_strength"] == _DEFAULT_INPAINT_MASKING_STRENGTH
     assert Path(task["image_guide"]) == Path("/img/panel.png")
     assert Path(task["image_mask"]) == Path("/img/mask.png")
 
@@ -587,7 +634,11 @@ def test_character_region_from_bubble():
     bubble = {"character": "REX", "x_frac": 0.5, "y_frac": 0.7,
               "width_frac": 0.4, "height_frac": 0.2}
     region = _get_character_region("REX", {"REX": bubble}, 3, 1)
-    assert region[3] == 1.0  # full height
+    # Inset vertically (small top margin, near-full height) so the mask reads
+    # as a figure band rather than a full-panel slab.
+    assert 0.0 < region[1] < 0.2          # top margin
+    assert 0.8 < region[3] <= 1.0         # near-full height
+    assert region[1] + region[3] <= 1.0   # stays within the panel
     assert region[0] >= 0.0
 
 
@@ -606,8 +657,33 @@ def test_generate_mask_creates_correct_image(env):
     assert mask_path.is_file()
     mask = Image.open(mask_path)
     assert mask.size == (704, 1024)
-    assert mask.getpixel((10, 512)) == 0       # left = black (preserve)
-    assert mask.getpixel((600, 512)) == 255    # right = white (repaint)
+    # Core of the repaint region (deep on the right) stays fully white even
+    # after feathering — the box is grown before the blur so the core is
+    # preserved.
+    assert mask.getpixel((690, 512)) == 255
+    # Far into the preserve region (left edge) stays black.
+    assert mask.getpixel((5, 512)) == 0
+    # The transition is now a gradient, not a hard 0->255 step: somewhere near
+    # the region boundary there is an intermediate gray value.
+    edge_values = [mask.getpixel((x, 512)) for x in range(300, 420)]
+    assert any(0 < v < 255 for v in edge_values), (
+        "expected a feathered (gradient) mask edge, got a hard step"
+    )
+
+
+@_with_env
+def test_generate_mask_feather_zero_is_hard_edge(env):
+    """feather=0 disables the blur and yields a crisp (rounded) edge."""
+    from PIL import Image
+    env.project.panels_dir.mkdir(parents=True, exist_ok=True)
+    mask_path = _generate_mask(704, 1024, (0.5, 0.0, 0.5, 1.0),
+                               env.project, "p1", 2, feather=0.0)
+    mask = Image.open(mask_path)
+    # No blur -> pixels are pure 0 or 255 (rounded corners aside, the mid-height
+    # scanline crosses only flat fill / flat background).
+    row = [mask.getpixel((x, 512)) for x in range(704)]
+    assert set(row) <= {0, 255}, "feather=0 should not introduce gray values"
+    assert 255 in row and 0 in row
 
 
 # ---------------------------------------------------------------------------

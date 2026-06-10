@@ -35,8 +35,11 @@ __all__ = ["build_prompts", "DEFAULT_NEGATIVE_PROMPT"]
 
 
 DEFAULT_NEGATIVE_PROMPT = (
+    "speech bubble, speech balloon, word balloon, dialogue bubble, "
+    "thought bubble, caption box, caption, text, lettering, "
+    "sound effect text, comic panel border, gutter, "
     "blurry, low quality, distorted hands, extra fingers, "
-    "watermark, text, signature, jpeg artifacts"
+    "watermark, signature, jpeg artifacts"
 )
 
 

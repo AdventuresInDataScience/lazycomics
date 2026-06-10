@@ -225,3 +225,60 @@ def test_only_page_pattern_files_are_archived(env):
     with zipfile.ZipFile(out) as zf:
         names = zf.namelist()
     assert names == ["page_001.png"]
+
+
+# ---------------------------------------------------------------------------
+# Upscaled-page preference (export ships pages_upscaled/ when present)
+# ---------------------------------------------------------------------------
+
+
+def _make_upscaled_page(env, page_num: int, w: int = 800, h: int = 1200,
+                        colour=(10, 20, 30)) -> Path:
+    """Write a page into the project's pages_upscaled/ dir."""
+    env.project.pages_upscaled_dir.mkdir(parents=True, exist_ok=True)
+    path = env.project.pages_upscaled_dir / f"page_{page_num:03d}.png"
+    Image.new("RGB", (w, h), colour).save(path)
+    return path
+
+
+@_with_env
+def test_prefers_upscaled_pages_when_present(env):
+    """If pages_upscaled/ has pages, export bundles those, not pages/."""
+    env.make_page(1, w=200, h=300)          # small, un-upscaled
+    _make_upscaled_page(env, 1, w=800, h=1200)  # large, upscaled
+
+    out = export_cbz(env.project)  # prefer_upscaled defaults True
+    with zipfile.ZipFile(out) as zf:
+        assert zf.namelist() == ["page_001.png"]
+        with zf.open("page_001.png") as f:
+            img = Image.open(f)
+            img.load()
+    # The archived page is the upscaled one (800x1200), not the 200x300 source.
+    assert img.size == (800, 1200), f"expected upscaled page, got {img.size}"
+
+
+@_with_env
+def test_falls_back_to_pages_when_no_upscaled(env):
+    """With no pages_upscaled/, export bundles the plain pages/."""
+    env.make_page(1, w=200, h=300)
+
+    out = export_cbz(env.project)
+    with zipfile.ZipFile(out) as zf:
+        with zf.open("page_001.png") as f:
+            img = Image.open(f)
+            img.load()
+    assert img.size == (200, 300)
+
+
+@_with_env
+def test_prefer_upscaled_false_uses_plain_pages(env):
+    """prefer_upscaled=False bundles pages/ even when upscaled pages exist."""
+    env.make_page(1, w=200, h=300)
+    _make_upscaled_page(env, 1, w=800, h=1200)
+
+    out = export_cbz(env.project, prefer_upscaled=False)
+    with zipfile.ZipFile(out) as zf:
+        with zf.open("page_001.png") as f:
+            img = Image.open(f)
+            img.load()
+    assert img.size == (200, 300), f"expected plain page, got {img.size}"

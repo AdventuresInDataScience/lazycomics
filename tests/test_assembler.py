@@ -388,12 +388,12 @@ def test_force_overwrites_existing(env):
 
 
 @_with_env
-def test_default_fit_mode_contain_preserves_edges(env):
-    # Source 800×400 (2:1), slot 600×900 (2:3). With the default
-    # ``contain`` mode the image scales to 600×300 (min fit) and is
-    # letterboxed inside the 600×900 slot with bg padding above/below.
-    # Critically, the BLUE LEFT edge is preserved (cover-crop would crop
-    # it off — that's the bug this default exists to avoid).
+def test_explicit_contain_mode_preserves_edges(env):
+    # Source 800×400 (2:1), slot 600×900 (2:3). With ``fit_mode="contain"``
+    # the image scales to 600×300 (min fit) and is letterboxed inside the
+    # 600×900 slot with bg padding above/below. Critically, the BLUE LEFT
+    # edge is preserved (cover-crop would crop it off). ``contain`` is the
+    # knob to reach for when a panel can't be regenerated at slot aspect.
     img = Image.new("RGB", (800, 400), (255, 0, 0))
     for x in range(266):
         for y in range(400):
@@ -404,7 +404,7 @@ def test_default_fit_mode_contain_preserves_edges(env):
     img.save(env.project.panels_text_dir / "page_1_panel_1.png")
 
     comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1))])], aspect=(2, 3))
-    _assemble_from_comic(env.project, comic, page_height_px=900)
+    _assemble_from_comic(env.project, comic, page_height_px=900, fit_mode="contain")
 
     out = Image.open(env.project.pages_dir / "page_001.png").convert("RGB")
     # Letterbox: image occupies y=300..600 (centered), with bg padding above/below.
@@ -417,6 +417,32 @@ def test_default_fit_mode_contain_preserves_edges(env):
     # Letterbox bands are bg (white).
     r, g, b = out.getpixel((300, 50))
     assert r > 240 and g > 240 and b > 240, f"expected white letterbox band, got ({r},{g},{b})"
+
+
+@_with_env
+def test_default_fit_mode_is_cover(env):
+    # No fit_mode arg → the default. Post-§14.1 the default is ``cover``:
+    # a mismatched-aspect panel is scaled to cover the slot and centre-cropped
+    # (the blue/green edges slice off; the red middle survives). For generated
+    # panels drift is ~0 so nothing is cropped; this exercises the fallback.
+    img = Image.new("RGB", (800, 400), (255, 0, 0))
+    for x in range(266):
+        for y in range(400):
+            img.putpixel((x, y), (0, 0, 255))
+    for x in range(533, 800):
+        for y in range(400):
+            img.putpixel((x, y), (0, 255, 0))
+    img.save(env.project.panels_text_dir / "page_1_panel_1.png")
+
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1))])], aspect=(2, 3))
+    _assemble_from_comic(env.project, comic, page_height_px=900)  # default fit_mode
+
+    out = Image.open(env.project.pages_dir / "page_001.png").convert("RGB")
+    # Default (cover) crops to the red middle — no white letterbox bands.
+    r, g, b = out.getpixel((300, 450))
+    assert r > 200 and b < 60 and g < 60, f"expected red middle after cover-crop, got ({r},{g},{b})"
+    r, g, b = out.getpixel((300, 50))
+    assert not (r > 240 and g > 240 and b > 240), "default cover should not letterbox"
 
 
 @_with_env

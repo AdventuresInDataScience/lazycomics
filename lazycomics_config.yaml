@@ -31,16 +31,39 @@ assembly:
   # 0.05 would allow 5% drift before non-stretch kicks in.
   stretch_tolerance: 0.0
 
-  # How to fit a panel into its slot when aspects differ. Options:
-  #   contain — scale to fit inside the slot, letterbox-pad with
-  #             bg_color. Preserves all content including edge text
-  #             overlays (captions, SFX, bubbles).
-  #   cover   — scale to fill the slot, centre-crop the overflow.
-  #             Fills the slot edge-to-edge but trims text at panel
-  #             edges. Use only when panels carry no edge content.
+  # How to fit a panel into its slot when aspects differ. Since the bridge
+  # now generates panels at the requested aspect (§14.1), generated panels
+  # match their slot and nothing is cropped or padded regardless of mode;
+  # this only bites for hand-edited / third-party panels whose aspect differs.
+  # Options:
+  #   cover   — (default) scale to fill the slot, centre-crop any overflow.
+  #             Fills edge-to-edge with no letterbox bands.
+  #   contain — scale to fit inside the slot, letterbox-pad with bg_color.
+  #             Preserves all content including edge text overlays; use for
+  #             un-regeneratable panels that carry edge content.
   #   stretch — resize without preserving aspect. Distorts faces;
   #             only safe when panels are authored at the slot aspect.
-  fit_mode: contain
+  fit_mode: cover
+
+
+# ---------------------------------------------------------------------------
+# Enrichment  (src/lazycomics/enricher.py)
+# ---------------------------------------------------------------------------
+enricher:
+  # How panels with 2+ characters are generated.
+  #   auto    — (default) single combined pass when every character on the
+  #             panel is LoRA-free (the inpaint path only adds drift when
+  #             there's no per-character LoRA to apply); base + per-character
+  #             inpaint passes when any character has a LoRA. Interaction
+  #             keywords (hugging, fighting, ...) always force a single pass
+  #             since inpaint would overwrite overlapping characters.
+  #   single  — always one combined pass naming every character (no inpaint).
+  #             Most robust against the "two disjointed halves" artifact;
+  #             relies on the prompt + reference to separate the characters.
+  #   inpaint — always base pass + one inpaint pass per non-primary character.
+  #             Use when you have per-character LoRAs and want each applied in
+  #             its own pass.
+  multi_char_strategy: auto
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +107,20 @@ wan2gp:
 
   # Wan2GP model_type (flat key, not nested). Matches filename in defaults/
   # without .json. Use "Export Settings" in Wan2GP UI to verify.
+  #
+  # --- Trying full Flux Dev instead of Klein (Tier-3 consistency option) ---
+  # Flux Dev has stronger prompt adherence and a more mature LoRA ecosystem
+  # than Klein 9B, at higher VRAM and slower generation. If character/style
+  # drift is unacceptable on Klein, it's worth a comparison. To switch:
+  #   1. Find the exact Flux Dev model_type in Wan2GP (its defaults/*.json
+  #      filename, or via Export Settings) and set `architecture` to it.
+  #   2. Flux Dev typically wants more steps (e.g. default_steps: 20-28) and a
+  #      guidance_scale around 3.5-4.0 — tune on a test page.
+  #   3. To claw back the speed, drop `base_resolution` (e.g. 768) and lean on
+  #      the Real-ESRGAN upscaler below to restore final page resolution.
+  #   4. Benchmark before committing:
+  #        python tools/profile_architectures.py <project_dir> flux2_klein_9b <flux_dev_model_type>
+  #      (project must be enriched + prompted + refs-prepared first).
   architecture: flux2_klein_9b
 
   # Default denoising steps (Klein 9B uses 4 by default).
@@ -113,12 +150,24 @@ wan2gp:
   # lazycomics are auto-copied here so the headless CLI can find them.
   loras_dir: null
 
-  # Inpaint settings (multi-character panels).
-  # denoising 0.6-0.75 paints a new character while preserving background;
-  # 1.0 fully regenerates the masked area (produces "disjointed" panels).
-  inpaint_denoising: 0.65       # denoising_strength for inpaint passes
-  inpaint_masking_strength: 0.3  # edge blending for inpaint mask
-  inpaint_mask_expand: 0         # pixel expansion of mask boundary
+  # Inpaint settings (multi-character panels: a base pass paints the primary
+  # character, then each additional character is inpainted into a masked region).
+  #
+  # denoising — fraction of the masked area regenerated. LOW values (0.15-0.35)
+  #   paint the new character *into* the existing scene and keep the base
+  #   panel's structure; HIGH values (0.6+) redraw the masked region from
+  #   scratch, which is what made busy panels come out as two disjointed
+  #   halves. 0.25 is the middle of the recommended range — lower it toward
+  #   0.15 if characters still look pasted-on, raise it toward 0.35 if the new
+  #   character paints in too weakly.
+  inpaint_denoising: 0.25        # denoising_strength for inpaint passes
+  inpaint_masking_strength: 0.3  # Wan2GP-side edge blending for inpaint mask
+  inpaint_mask_expand: 0         # Wan2GP-side pixel dilation of mask boundary
+  # feather — Gaussian-blur radius applied to the lazycomics-generated mask,
+  #   as a fraction of the panel's short edge. Soft mask edges blend the
+  #   inpaint into the surrounding art instead of leaving a hard seam. 0
+  #   disables feathering (hard rounded edge).
+  inpaint_mask_feather: 0.04
 
 
 # ---------------------------------------------------------------------------
@@ -144,3 +193,30 @@ upscaler:
 
   # Upscale factor (fixed by model: 4 for x4plus variants).
   scale: 4
+
+# ---------------------------------------------------------------------------
+# Text overlay rendering  (src/lazycomics/text_renderer.py)
+# ---------------------------------------------------------------------------
+# Controls font sizes and speech-bubble tail length for the captions, SFX,
+# and dialogue bubbles overlaid onto generated panels. Font sizes are a
+# fraction of each panel's WIDTH (so they stay legible across small grid
+# cells and large splash panels alike), then multiplied by font_scale and
+# floored at min_font_px. To make ALL text bigger or smaller in one move,
+# change font_scale; for finer control, tune the per-type ratios.
+text:
+  # Per-type font size as a fraction of panel width.
+  dialogue_font_ratio: 0.030   # speech/thought/shout/whisper text
+  caption_font_ratio: 0.028    # narrator caption boxes
+  sfx_font_ratio: 0.050        # sound effects (kept large/punchy)
+
+  # Floor so text never becomes illegible on a tiny panel.
+  min_font_px: 16
+
+  # Global multiplier applied on top of the ratios. Bump to ~1.2 if text
+  # reads small in your panels, or ~0.85 if it reads large.
+  font_scale: 1.0
+
+  # Speech-bubble tail length as a fraction of the panel's SHORT edge,
+  # floored at 16px. Comic tails are short stubs that indicate the speaker;
+  # they do not stretch across the panel to touch the face.
+  tail_frac: 0.05

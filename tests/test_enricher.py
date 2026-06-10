@@ -18,7 +18,7 @@ from types import SimpleNamespace
 SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
 
-from lazycomics.asset_registry import register_character, register_location  # noqa: E402
+from lazycomics.asset_registry import register_character, register_location, set_lora  # noqa: E402
 from lazycomics.enricher import _enrich_from_comic  # noqa: E402
 from lazycomics.models import CaptionBox, CharacterRef, DialogueLine, Sfx  # noqa: E402
 from lazycomics.project import create_project  # noqa: E402
@@ -632,7 +632,29 @@ def test_strategy_single_when_one_char(env):
 
 
 @_with_env
-def test_strategy_multi_inpaint_when_two_chars(env):
+def test_strategy_auto_single_when_two_chars_lora_free(env):
+    # New default: with no per-character LoRA, the inpaint pass adds drift for
+    # no benefit, so auto picks a single combined pass.
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX"])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.char_generation_strategy == "single"
+
+
+@_with_env
+def test_strategy_auto_single_when_three_chars_lora_free(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX", "GHOST"])])])
+    panel = _enrich_from_comic(env.project, comic)[0]
+    assert panel.char_generation_strategy == "single"
+
+
+@_with_env
+def test_strategy_auto_inpaint_when_a_char_has_lora(env):
+    # A per-character LoRA means inpaint earns its place (each char gets its
+    # own pass), so auto routes 2+ chars through multi_inpaint.
+    register_character(env.project, "REX", description="big robot")
+    set_lora(env.project, "character", "REX", "/fake/rex.safetensors", 0.8, "rextrig")
     comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
                                      chars=["NOVA", "REX"])])])
     panel = _enrich_from_comic(env.project, comic)[0]
@@ -640,15 +662,10 @@ def test_strategy_multi_inpaint_when_two_chars(env):
 
 
 @_with_env
-def test_strategy_multi_inpaint_when_three_chars(env):
-    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
-                                     chars=["NOVA", "REX", "GHOST"])])])
-    panel = _enrich_from_comic(env.project, comic)[0]
-    assert panel.char_generation_strategy == "multi_inpaint"
-
-
-@_with_env
-def test_strategy_downgrades_to_single_on_fighting(env):
+def test_strategy_auto_downgrades_to_single_on_fighting(env):
+    # Interaction keywords force single even when a LoRA is present.
+    register_character(env.project, "REX", description="big robot")
+    set_lora(env.project, "character", "REX", "/fake/rex.safetensors", 0.8, "rextrig")
     comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
                                      chars=["NOVA", "REX"],
                                      action="fighting fiercely")])])
@@ -657,7 +674,9 @@ def test_strategy_downgrades_to_single_on_fighting(env):
 
 
 @_with_env
-def test_strategy_downgrades_on_shot_hint_embrace(env):
+def test_strategy_auto_downgrades_on_shot_hint_embrace(env):
+    register_character(env.project, "REX", description="big robot")
+    set_lora(env.project, "character", "REX", "/fake/rex.safetensors", 0.8, "rextrig")
     comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
                                      chars=["NOVA", "REX"],
                                      shot="closeup embracing")])])
@@ -666,13 +685,32 @@ def test_strategy_downgrades_on_shot_hint_embrace(env):
 
 
 @_with_env
-def test_strategy_stays_multi_when_no_interaction(env):
+def test_strategy_mode_single_forces_single_even_with_lora(env):
+    register_character(env.project, "REX", description="big robot")
+    set_lora(env.project, "character", "REX", "/fake/rex.safetensors", 0.8, "rextrig")
     comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
-                                     chars=["NOVA", "REX"],
-                                     shot="wide shot",
-                                     action="talking across a table")])])
-    panel = _enrich_from_comic(env.project, comic)[0]
+                                     chars=["NOVA", "REX"])])])
+    panel = _enrich_from_comic(env.project, comic, strategy_mode="single")[0]
+    assert panel.char_generation_strategy == "single"
+
+
+@_with_env
+def test_strategy_mode_inpaint_forces_inpaint_when_lora_free(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX"])])])
+    panel = _enrich_from_comic(env.project, comic, strategy_mode="inpaint")[0]
     assert panel.char_generation_strategy == "multi_inpaint"
+
+
+@_with_env
+def test_strategy_invalid_mode_raises(env):
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
+                                     chars=["NOVA", "REX"])])])
+    try:
+        _enrich_from_comic(env.project, comic, strategy_mode="bogus")
+        assert False, "expected ValueError for invalid strategy_mode"
+    except ValueError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -818,6 +856,9 @@ def test_inpaint_order_rest_stable_on_equal_dialogue(env):
 
 @_with_env
 def test_strategy_and_order_persisted_in_json(env):
+    # REX has a LoRA, so auto keeps this 2-char panel on the inpaint path.
+    register_character(env.project, "REX", description="big robot")
+    set_lora(env.project, "character", "REX", "/fake/rex.safetensors", 0.8, "rextrig")
     comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1), loc="x",
                                      chars=["NOVA", "REX"],
                                      dialogue=[_dl("REX", "Hello.")])])])

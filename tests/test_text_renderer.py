@@ -83,6 +83,65 @@ def _with_env(fn):
 
 
 # ---------------------------------------------------------------------------
+# Geometry helpers for the placement tests. Track-2 placement is dynamic
+# (bubbles go near their speaker / into negative space), so tests locate the
+# rendered bubbles rather than assuming fixed corners.
+# ---------------------------------------------------------------------------
+
+
+def _white_bbox(img, region=None):
+    """(x0, y0, x1, y1, count) of fully-white pixels, optionally within region."""
+    W, H = img.size
+    rx0, ry0, rx1, ry1 = region or (0, 0, W, H)
+    xs = []
+    ys = []
+    n = 0
+    for y in range(ry0, ry1):
+        for x in range(rx0, rx1):
+            r, g, b = img.getpixel((x, y))
+            if r > 240 and g > 240 and b > 240:
+                xs.append(x)
+                ys.append(y)
+                n += 1
+    if not xs:
+        return None
+    return (min(xs), min(ys), max(xs), max(ys), n)
+
+
+def _white_y_bands(img, step=3, gap=6):
+    """Contiguous vertical bands ``(y_top, y_bot)`` of rows that contain white.
+
+    Two vertically-stacked bubbles separated by a dark gutter produce two
+    bands; this is how we assert "stacked, non-overlapping" without caring
+    about exact pixel coordinates.
+    """
+    W, H = img.size
+    rows = [
+        y for y in range(H)
+        if any(all(c > 240 for c in img.getpixel((x, y))) for x in range(0, W, step))
+    ]
+    bands = []
+    cur = None
+    for y in rows:
+        if cur and y <= cur[1] + gap:
+            cur[1] = y
+        else:
+            if cur:
+                bands.append(tuple(cur))
+            cur = [y, y]
+    if cur:
+        bands.append(tuple(cur))
+    return bands
+
+
+def _rect_overlap(a, b):
+    """Intersection area of two (x0, y0, x1, y1) rects."""
+    ix = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    return ix * iy
+
+
+# ---------------------------------------------------------------------------
 # Basics: outputs, return value, dimensions
 # ---------------------------------------------------------------------------
 
@@ -273,8 +332,9 @@ def test_sfx_center_position_supported(env):
 
 
 @_with_env
-def test_dialogue_renders_bubble_at_top_by_default(env):
-    """No faces detected -> bubbles default to the top of the speaker's region."""
+def test_dialogue_no_face_places_bubble_near_predicted_centre(env):
+    """No faces: a lone speaker's bubble lands near the centre of its
+    predicted (full-panel) region — not jammed into a corner."""
     # _Env patches _detect_all_faces to return [] by default.
     env.make_panel("p1", w=800, h=600, colour=(40, 40, 40))  # dark panel
     env.write_enriched("p1", dialogue_lines=[
@@ -283,18 +343,17 @@ def test_dialogue_renders_bubble_at_top_by_default(env):
     ])
     render_text(env.project)
     out = Image.open(env.project.panels_text_dir / "p1.png").convert("RGB")
-    # Top band of the bubble should be predominantly white.
-    white_count = sum(
-        1 for x in range(35, 100)
-        if all(c > 240 for c in out.getpixel((x, 30)))
-    )
-    assert white_count > 40, f"expected white bubble fill near the top, got {white_count} white px"
+    bb = _white_bbox(out)
+    assert bb is not None, "expected a rendered bubble"
+    cx = (bb[0] + bb[2]) // 2
+    assert 240 <= cx <= 560, f"bubble should sit near panel centre; cx={cx}"
 
 
 @_with_env
 def test_dialogue_avoids_face_in_top_half_of_panel(env):
-    """Face in the top half -> bubbles get pushed to the bottom of the region."""
-    env.set_faces([(300, 60, 500, 260)])  # face in top half
+    """A detected face is not covered: the bubble is placed clear of it."""
+    face = (300, 60, 500, 260)  # face in the top half
+    env.set_faces([face])
     env.make_panel("p1", w=800, h=600, colour=(40, 40, 40))
     env.write_enriched("p1", dialogue_lines=[
         {"character": "NOVA", "text": "Hello world", "bubble_type": "speech"},
@@ -302,26 +361,23 @@ def test_dialogue_avoids_face_in_top_half_of_panel(env):
     render_text(env.project)
     out = Image.open(env.project.panels_text_dir / "p1.png").convert("RGB")
 
-    # Top of panel should still be the dark background (no bubble there).
-    top_dark = sum(
-        1 for x in range(30, 100)
-        if all(c < 80 for c in out.getpixel((x, 30)))
+    bb = _white_bbox(out)
+    assert bb is not None, "expected a rendered bubble"
+    # The face itself stays uncovered — its centre is still panel background.
+    r, g, b = out.getpixel((400, 160))
+    assert r < 80 and g < 80 and b < 80, (
+        f"face centre should not be covered by a bubble; got ({r},{g},{b})"
     )
-    assert top_dark > 40, "expected dark panel background near top"
-
-    # Near the bottom there should be a band of bubble-fill white pixels.
-    # The bubble's x position is now anchored to the face center (x=400),
-    # so scan a band around there rather than the panel's left edge.
-    bottom_white = sum(
-        1 for x in range(330, 470)
-        if all(c > 240 for c in out.getpixel((x, 545)))
+    # And the bubble's bounding box does not intrude on the face rect.
+    assert _rect_overlap(bb[:4], face) == 0, (
+        f"bubble bbox {bb[:4]} should not overlap face {face}"
     )
-    assert bottom_white > 40, f"expected white bubble fill near bottom, got {bottom_white} white px"
 
 
 @_with_env
 def test_two_lines_same_speaker_stack_vertically(env):
-    """Multiple lines from the *same* speaker stack within that speaker's region."""
+    """Consecutive lines from the same speaker stack into two vertically
+    separated bubbles (the convention for one character's run of dialogue)."""
     env.make_panel("p1", w=800, h=600, colour=(40, 40, 40))
     env.write_enriched("p1",
         dialogue_lines=[
@@ -336,30 +392,18 @@ def test_two_lines_same_speaker_stack_vertically(env):
     render_text(env.project)
     out = Image.open(env.project.panels_text_dir / "p1.png").convert("RGB")
 
-    # Both bubbles in NOVA's region (whole panel) — they stack vertically
-    # at the left edge. Scan a column inside the bubble's left padding
-    # (x=25; text starts at x=32 with padding=12) so the result is robust
-    # to font size changes.
-    runs = 0
-    in_run = False
-    for y in range(15, 250):
-        r, g, b = out.getpixel((25, y))
-        is_white = r >= 240 and g >= 240 and b >= 240
-        if is_white and not in_run:
-            runs += 1
-            in_run = True
-        elif not is_white:
-            in_run = False
-    assert runs == 2, f"expected 2 stacked bubbles, found {runs} white runs"
-
-    # Lower half should still be panel background.
-    r, g, b = out.getpixel((25, 400))
-    assert r < 80 and g < 80 and b < 80
+    bands = _white_y_bands(out)
+    assert len(bands) == 2, f"expected 2 stacked bubbles, found bands={bands}"
+    # The second bubble sits strictly below the first, with a gap between.
+    assert bands[0][1] < bands[1][0], (
+        f"bubbles should be vertically separated; bands={bands}"
+    )
 
 
 @_with_env
 def test_two_speakers_go_to_distinct_regions(env):
-    """Two speakers with left/right bubble_layout regions don't overlap."""
+    """Two speakers with left/right layout regions get bubbles on their own
+    side of the panel, and the bubbles don't overlap."""
     env.make_panel("p1", w=800, h=600, colour=(40, 40, 40))
     env.write_enriched("p1",
         dialogue_lines=[
@@ -376,19 +420,20 @@ def test_two_speakers_go_to_distinct_regions(env):
     render_text(env.project)
     out = Image.open(env.project.panels_text_dir / "p1.png").convert("RGB")
 
-    # Sample each bubble's left-padding strip (x=bubble_x+5, y in text band).
-    # NOVA bubble at (20, 20); REX bubble at (420, 20).
-    assert all(c > 240 for c in out.getpixel((25, 50))), (
-        f"NOVA bubble missing at left half; got {out.getpixel((25, 50))}"
+    left = _white_bbox(out, (0, 0, 400, 600))
+    right = _white_bbox(out, (400, 0, 800, 600))
+    assert left is not None, "NOVA bubble missing from left half"
+    assert right is not None, "REX bubble missing from right half"
+    assert (left[0] + left[2]) // 2 < 400 < (right[0] + right[2]) // 2, (
+        "each speaker's bubble should sit on its own side"
     )
-    assert all(c > 240 for c in out.getpixel((425, 50))), (
-        f"REX bubble missing at right half; got {out.getpixel((425, 50))}"
-    )
+    assert _rect_overlap(left[:4], right[:4]) == 0, "bubbles should not overlap"
 
 
 @_with_env
 def test_two_speakers_no_bubble_layout_auto_split(env):
-    """Two speakers with no bubble_layout get auto-split — bubbles don't overlap."""
+    """Two speakers with no bubble_layout get auto-split — each bubble lands
+    on its own side and the two don't overlap."""
     env.make_panel("p1", w=800, h=600, colour=(40, 40, 40))
     env.write_enriched("p1", dialogue_lines=[
         {"character": "NOVA", "text": "left line", "bubble_type": "speech"},
@@ -396,10 +441,81 @@ def test_two_speakers_no_bubble_layout_auto_split(env):
     ])
     render_text(env.project)
     out = Image.open(env.project.panels_text_dir / "p1.png").convert("RGB")
-    # Fallback auto-split: NOVA gets left half, REX gets right half.
-    # Sample left-padding of each bubble (white area, not on a glyph).
-    assert all(c > 240 for c in out.getpixel((25, 50))), "NOVA bubble missing"
-    assert all(c > 240 for c in out.getpixel((425, 50))), "REX bubble missing"
+
+    left = _white_bbox(out, (0, 0, 400, 600))
+    right = _white_bbox(out, (400, 0, 800, 600))
+    assert left is not None, "NOVA bubble missing from left half"
+    assert right is not None, "REX bubble missing from right half"
+    assert (left[0] + left[2]) // 2 < 400 < (right[0] + right[2]) // 2
+    assert _rect_overlap(left[:4], right[:4]) == 0, "bubbles should not overlap"
+
+
+@_with_env
+def test_speaker_bubbles_track_actual_face_positions(env):
+    """Bubbles follow where faces actually are, not a uniform mid-height slot.
+
+    A high-left face and a low-right face: the left speaker's bubble sits
+    high and the right speaker's sits low, each clear of its own face. This
+    is the core Track-2 behaviour — placement keyed on detected positions
+    rather than the enricher's equal-slice prediction.
+    """
+    face_a = (120, 60, 220, 160)    # high, left
+    face_b = (580, 420, 680, 520)   # low, right
+    env.set_faces([face_a, face_b])
+    env.make_panel("p1", w=800, h=600, colour=(40, 40, 40))
+    env.write_enriched("p1",
+        dialogue_lines=[
+            {"character": "NOVA", "text": "hi there", "bubble_type": "speech"},
+            {"character": "REX", "text": "yo friend", "bubble_type": "speech"},
+        ],
+        bubble_layout=[
+            {"character": "NOVA", "x_frac": 0.0, "y_frac": 0,
+             "width_frac": 0.5, "height_frac": 1},
+            {"character": "REX", "x_frac": 0.5, "y_frac": 0,
+             "width_frac": 0.5, "height_frac": 1},
+        ],
+    )
+    render_text(env.project)
+    out = Image.open(env.project.panels_text_dir / "p1.png").convert("RGB")
+
+    left = _white_bbox(out, (0, 0, 400, 600))
+    right = _white_bbox(out, (400, 0, 800, 600))
+    assert left is not None and right is not None
+    left_cy = (left[1] + left[3]) // 2
+    right_cy = (right[1] + right[3]) // 2
+    # Left bubble (high face) sits above the right bubble (low face).
+    assert left_cy < right_cy, (
+        f"bubbles should track face heights; left_cy={left_cy} right_cy={right_cy}"
+    )
+    # Neither bubble covers its associated face.
+    assert _rect_overlap(left[:4], face_a) == 0, "left bubble covers the left face"
+    assert _rect_overlap(right[:4], face_b) == 0, "right bubble covers the right face"
+
+
+@_with_env
+def test_bubble_prefers_negative_space_over_busy_region(env):
+    """With no face to anchor to, the bubble drifts toward empty negative
+    space and away from a visually busy (high-detail) region."""
+    # Build a panel whose left half is busy (fine stripes -> strong edges)
+    # and whose right half is flat. No pure white, so the white-bubble
+    # detector isn't fooled by the background.
+    img = Image.new("RGB", (800, 600), (110, 110, 110))
+    px = img.load()
+    for y in range(600):
+        for x in range(0, 400):
+            px[x, y] = (0, 0, 0) if (x // 3) % 2 == 0 else (130, 130, 130)
+    img.save(env.project.panels_dir / "p1.png")
+    env.write_enriched("p1", dialogue_lines=[
+        {"character": "X", "text": "which side has room", "bubble_type": "speech"},
+    ])
+    render_text(env.project)
+    out = Image.open(env.project.panels_text_dir / "p1.png").convert("RGB")
+
+    bb = _white_bbox(out, (0, 0, 800, 600))
+    assert bb is not None, "expected a bubble"
+    cx = (bb[0] + bb[2]) // 2
+    # The flat right half is the negative space; the bubble should land there.
+    assert cx > 400, f"bubble should avoid the busy left half; cx={cx}"
 
 
 # ---------------------------------------------------------------------------
@@ -428,10 +544,12 @@ def test_speech_bubble_fills_interior_left_padding(env):
     ])
     render_text(env.project)
     out = Image.open(env.project.panels_text_dir / "speech_p.png").convert("RGB")
-    # Bubble at (20, 20). Padding=12; text starts at x=32. At (25, 50) we're
-    # in the left-padding strip (past the rounded corner radius), so the
-    # rounded rectangle's fill should reach this pixel.
-    r, g, b = out.getpixel((25, 50))
+    bb = _white_bbox(out)
+    assert bb is not None, "expected a speech bubble"
+    # A few px inside the bubble's left edge, at mid-height, is left-padding:
+    # the rounded rect's fill, not a glyph.
+    midy = (bb[1] + bb[3]) // 2
+    r, g, b = out.getpixel((bb[0] + 5, midy))
     assert r > 240 and g > 240 and b > 240, (
         f"speech bubble interior padding should be white; got ({r},{g},{b})"
     )
@@ -439,7 +557,8 @@ def test_speech_bubble_fills_interior_left_padding(env):
 
 @_with_env
 def test_shout_starburst_corner_is_outside_polygon(env):
-    """Shout is a starburst — its bbox corners sit in the gaps between spikes."""
+    """Shout is a starburst — its centre is filled but its bbox corners sit
+    in the gaps between spikes (panel background)."""
     env.make_panel("shout_p", w=800, h=600, colour=(40, 40, 40))
     env.write_enriched("shout_p", dialogue_lines=[
         {"character": "X", "text": "wide enough text to give a measurable bubble",
@@ -447,11 +566,12 @@ def test_shout_starburst_corner_is_outside_polygon(env):
     ])
     render_text(env.project)
     out = Image.open(env.project.panels_text_dir / "shout_p.png").convert("RGB")
-    # The starburst's outer points reach only the cardinal directions on its
-    # bounding ellipse. The bbox corner area, a few px diagonally in, is
-    # OUTSIDE the polygon (between spikes) — should be panel background.
-    # Equivalent check fails for speech (rounded rect fills near here).
-    r, g, b = out.getpixel((23, 23))
+    bb = _white_bbox(out)
+    assert bb is not None, "expected a shout bubble"
+    # A few px diagonally inside the bbox corner falls between two spikes, so
+    # it stays panel background. (A rounded speech rect would be white here —
+    # this is what distinguishes the starburst silhouette.)
+    r, g, b = out.getpixel((bb[0] + 3, bb[1] + 3))
     assert r < 80 and g < 80 and b < 80, (
         f"shout bbox corner should be panel bg (between spikes); got ({r},{g},{b})"
     )
@@ -459,7 +579,7 @@ def test_shout_starburst_corner_is_outside_polygon(env):
 
 @_with_env
 def test_whisper_border_is_dashed(env):
-    """Whisper's top edge alternates dark dashes with white gaps."""
+    """Whisper's top edge alternates dark dashes with light gaps."""
     env.make_panel("whisper_p", w=800, h=600, colour=(40, 40, 40))
     env.write_enriched("whisper_p", dialogue_lines=[
         {"character": "X", "text": "wide enough text to span a few dashes",
@@ -468,12 +588,15 @@ def test_whisper_border_is_dashed(env):
     render_text(env.project)
     out = Image.open(env.project.panels_text_dir / "whisper_p.png").convert("RGB")
 
-    # Bubble starts at margin=20 on the y-axis. Scan along that exact row inside
-    # the bubble's x-range and count dark -> light transitions; many = dashed.
+    bb = _white_bbox(out)
+    assert bb is not None, "expected a whisper bubble"
+    # Scan just inside the top edge across the bubble width, counting
+    # dark<->light transitions; a dashed border yields many.
+    y = bb[1] + 1
     transitions = 0
     last_dark = None
-    for x in range(25, 500):
-        r, g, b = out.getpixel((x, 20))
+    for x in range(bb[0] - 2, bb[2] + 2):
+        r, g, b = out.getpixel((x, y))
         is_dark = r < 80 and g < 80 and b < 80
         if last_dark is not None and is_dark != last_dark:
             transitions += 1
@@ -485,7 +608,13 @@ def test_whisper_border_is_dashed(env):
 
 @_with_env
 def test_speech_and_shout_produce_different_silhouettes(env):
-    """Same text rendered with different bubble types yields different fill areas."""
+    """Speech (solid rounded rect) and shout (spiky starburst) differ in shape.
+
+    Compares the *fill ratio* — white pixels / bounding-box area — of each
+    bubble. A rounded rectangle nearly fills its bbox; a starburst leaves
+    large concave gaps between its spikes, so its fill ratio is much lower.
+    This is robust to the absolute size of either shape.
+    """
     text = "test text long enough to make a bubble"
     for pid, btype in (("speech_p", "speech"), ("shout_p", "shout")):
         env.make_panel(pid, w=800, h=600, colour=(40, 40, 40))
@@ -495,13 +624,25 @@ def test_speech_and_shout_produce_different_silhouettes(env):
     render_text(env.project)
     speech_img = Image.open(env.project.panels_text_dir / "speech_p.png").convert("RGB")
     shout_img = Image.open(env.project.panels_text_dir / "shout_p.png").convert("RGB")
-    # Sample the same top-left band of both panels.
-    speech_white = _white_pixel_count(speech_img, 10, 10, 400, 120)
-    shout_white = _white_pixel_count(shout_img, 10, 10, 400, 120)
-    # They should differ by more than a trivial amount.
-    assert abs(speech_white - shout_white) > 500, (
-        f"speech vs shout fill areas should differ noticeably; "
-        f"got speech={speech_white}, shout={shout_white}"
+
+    def fill_ratio(img):
+        xs, ys, n = [], [], 0
+        for y in range(0, 600):
+            for x in range(0, 800):
+                r, g, b = img.getpixel((x, y))
+                if r > 240 and g > 240 and b > 240:
+                    xs.append(x); ys.append(y); n += 1
+        if not xs:
+            return 0.0
+        area = (max(xs) - min(xs) + 1) * (max(ys) - min(ys) + 1)
+        return n / area
+
+    speech_ratio = fill_ratio(speech_img)
+    shout_ratio = fill_ratio(shout_img)
+    assert speech_ratio - shout_ratio > 0.15, (
+        f"speech should fill its bounding box far more densely than the "
+        f"spiky shout starburst; got speech={speech_ratio:.3f}, "
+        f"shout={shout_ratio:.3f}"
     )
 
 
@@ -516,9 +657,13 @@ def test_speech_and_shout_produce_different_silhouettes(env):
 
 
 @_with_env
-def test_speech_tail_drawn_toward_detected_face_below_bubble(env):
-    """Single speaker, single face in lower half -> tail points down to the face."""
-    # Bubble defaults to the top of the panel; face at (370, 470) is below it.
+def test_speech_tail_is_short_stub_toward_face(env):
+    """Speech tail is a short stub just below the bubble — not a leader line.
+
+    The face sits low in the panel (y~470). The tail should point toward it
+    but remain a short stub near the bubble; it must NOT stretch down the
+    panel to physically reach the face.
+    """
     env.set_faces([(320, 420, 420, 520)])
     env.make_panel("p1", w=800, h=600, colour=(40, 40, 40))
     env.write_enriched("p1",
@@ -533,19 +678,42 @@ def test_speech_tail_drawn_toward_detected_face_below_bubble(env):
     render_text(env.project)
     out = Image.open(env.project.panels_text_dir / "p1.png").convert("RGB")
 
-    # The tail fill is a white triangle from the bubble bottom-centre to the
-    # face centre. We scan a wide x-corridor at several y depths between the
-    # bubble and the face and look for white intrusions on the dark panel.
-    found_white = False
-    for y in (120, 180, 260, 340):
-        for x in range(40, 380):
-            r, g, b = out.getpixel((x, y))
-            if r > 240 and g > 240 and b > 240:
-                found_white = True
-                break
-        if found_white:
-            break
-    assert found_white, "tail fill (white) should extend from bubble toward face"
+    whites = [(x, y) for y in range(0, 600) for x in range(0, 800)
+              if all(c > 240 for c in out.getpixel((x, y)))]
+    assert whites, "expected a white speech bubble"
+    xs = [x for x, _ in whites]
+    ys = [y for _, y in whites]
+    cx = (min(xs) + max(xs)) // 2
+
+    def col_bottom(x):
+        col = [y for y in range(0, 600) if all(c > 240 for c in out.getpixel((x, y)))]
+        return max(col) if col else 0
+
+    center_bot = col_bottom(cx)            # body + tail at the centre
+    edge_bot = col_bottom(min(xs) + 3)     # body only, away from the tail
+    max_tail = max(16, int(min(800, 600) * 0.05))  # mirrors the renderer
+
+    # The tail protrudes below the bubble body at the centre column only.
+    assert center_bot > edge_bot + 8, (
+        f"expected a tail protruding below the body at centre; "
+        f"center_bot={center_bot}, edge_bot={edge_bot}"
+    )
+    # ...but it is a SHORT stub, not a panel-spanning leader line.
+    assert center_bot - edge_bot <= max_tail + 12, (
+        f"tail should be a short stub (<= {max_tail}px); "
+        f"protrusion={center_bot - edge_bot}"
+    )
+    # The bubble is placed near the speaker (here, just above the face), not
+    # parked elsewhere on the panel.
+    bubble_cy = (min(ys) + max(ys)) // 2
+    assert abs(bubble_cy - 470) < 170, (
+        f"bubble should sit near the speaker's face (y~470); bubble_cy={bubble_cy}"
+    )
+    # The face itself stays uncovered.
+    r, g, b = out.getpixel((370, 470))
+    assert r < 80 and g < 80 and b < 80, (
+        f"face centre should not be covered; got ({r},{g},{b})"
+    )
 
 
 @_with_env

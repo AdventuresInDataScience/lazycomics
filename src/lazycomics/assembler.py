@@ -40,7 +40,7 @@ _DEFAULT_PAGE_HEIGHT_PX = 3000
 _DEFAULT_GUTTER_PX = 20
 _DEFAULT_BG_COLOR = "#ffffff"
 _DEFAULT_STRETCH_TOLERANCE = 0.0
-_DEFAULT_FIT_MODE = "contain"
+_DEFAULT_FIT_MODE = "cover"
 _VALID_FIT_MODES = ("contain", "cover", "stretch")
 
 
@@ -252,13 +252,16 @@ def _fit_to_slot(
     - If relative aspect drift ≤ ``stretch_tolerance``: stretch (resize).
     - Otherwise, behaviour depends on ``fit_mode``:
 
-      * ``contain`` (default): scale to fit *inside* the slot, pad
-        remaining area with ``bg_color``. Preserves all panel content
-        including text overlays at the panel edges.
-      * ``cover``: scale to cover the slot, centre-crop the overflow.
-        Fills the slot edge-to-edge but loses a sliver of the panel
-        on the long axis — and that sliver is exactly where the text
-        renderer puts captions, SFX, and bubbles.
+      * ``cover`` (default): scale to cover the slot, centre-crop the
+        overflow. Now that the bridge produces panels at the requested
+        aspect (§14.1), drift is ~0 for generated panels so this crops
+        nothing; for hand-edited / third-party panels whose aspect differs
+        it fills the slot edge-to-edge, pulling in slightly rather than
+        leaving letterbox bands.
+      * ``contain``: scale to fit *inside* the slot, pad remaining area
+        with ``bg_color``. Preserves all panel content including text
+        overlays at the panel edges, at the cost of letterbox bands when
+        the panel aspect doesn't match the slot.
       * ``stretch``: ignore aspect, resize to fit. Distorts faces;
         useful only when you've authored panels at the exact slot
         aspect already.

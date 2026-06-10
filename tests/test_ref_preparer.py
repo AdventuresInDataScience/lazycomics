@@ -20,6 +20,7 @@ sys.path.insert(0, str(SRC))
 
 from lazycomics import ref_preparer  # noqa: E402
 from lazycomics.asset_registry import register_style  # noqa: E402
+from lazycomics.geometry import resolution_for_aspect  # noqa: E402
 from lazycomics.project import create_project  # noqa: E402
 from lazycomics.ref_preparer import prepare_references  # noqa: E402
 
@@ -135,38 +136,39 @@ def test_no_enriched_files_returns_empty(env):
 
 @_with_env
 def test_primary_cropped_to_target_aspect(env):
-    # Source is 900×600 (3:2 = 1.5). Target aspect 2:3 = 0.667. Should crop horizontally.
+    # Source is 900×600 (3:2). Target aspect 2:3. The primary must come out at
+    # the EXACT resolution the bridge will request (Klein keys output aspect
+    # off image_start), so face-aware crop to aspect then resize to (W, H).
     src = env.make_src("wide.png", 900, 600)
     env.write_enriched("p1", aspect_ratio=2 / 3, characters=[_char("X", [src])])
     prepare_references(env.project)
 
     out = Image.open(env.project.refs_prepared_dir / "p1_ref.png")
-    w, h = out.size
-    assert abs((w / h) - (2 / 3)) < 0.01, f"got aspect {w/h:.3f}, expected 0.667"
+    assert out.size == resolution_for_aspect(2 / 3, 1024), (
+        f"got {out.size}, expected {resolution_for_aspect(2 / 3, 1024)}"
+    )
 
 
 @_with_env
 def test_primary_no_crop_when_already_target_aspect(env):
-    # Source 600×900 = 2:3, target 2:3 → no crop, just resize.
+    # Source 600×900 already 2:3; still resized to the exact target resolution.
     src = env.make_src("ok.png", 600, 900)
     env.write_enriched("p1", aspect_ratio=2 / 3, characters=[_char("X", [src])])
     prepare_references(env.project)
 
     out = Image.open(env.project.refs_prepared_dir / "p1_ref.png")
-    w, h = out.size
-    assert abs((w / h) - (2 / 3)) < 0.01
+    assert out.size == resolution_for_aspect(2 / 3, 1024)
 
 
 @_with_env
 def test_primary_crop_vertical_when_source_too_tall(env):
-    # Source 600×1200 (1:2 = 0.5), target 2:3 (~0.667) → crop vertically.
+    # Source 600×1200 (1:2), target 2:3 → crop vertically, then exact resize.
     src = env.make_src("tall.png", 600, 1200)
     env.write_enriched("p1", aspect_ratio=2 / 3, characters=[_char("X", [src])])
     prepare_references(env.project)
 
     out = Image.open(env.project.refs_prepared_dir / "p1_ref.png")
-    w, h = out.size
-    assert abs((w / h) - (2 / 3)) < 0.01
+    assert out.size == resolution_for_aspect(2 / 3, 1024)
 
 
 @_with_env
@@ -182,9 +184,9 @@ def test_face_aware_crop_shifts_window(env):
     out = Image.open(env.project.refs_prepared_dir / "p1_ref.png")
     # New width should be h * target_aspect = 600 * 2/3 = 400.
     # Centre crop would put x1 around 400; face-centred should put it around 100.
-    # We can't read crop coords directly, but the resized output should still be ~2:3.
-    w, h = out.size
-    assert abs((w / h) - (2 / 3)) < 0.01
+    # We can't read crop coords directly, but the resized output should be at
+    # the exact target resolution.
+    assert out.size == resolution_for_aspect(2 / 3, 1024)
 
     # Pixel inspection: in a centre crop of a uniformly-coloured image these are equivalent,
     # so we re-run with two-tone source and check colour distribution shifted toward left.
@@ -253,14 +255,32 @@ def test_resized_to_working_resolution(env):
 
 
 @_with_env
-def test_no_upscale_when_smaller_than_working_resolution(env):
+def test_primary_sized_to_target_even_when_source_small(env):
+    # A small source (200×300) must still be produced at the exact target
+    # resolution — Klein needs image_start at the output size, so upscaling a
+    # small source is correct here (the old "never upscale" rule applied to
+    # the long edge only and produced an under-sized image_start).
     src = env.make_src("small.png", 200, 300)  # already 2:3
     env.write_enriched("p1", aspect_ratio=2 / 3, characters=[_char("X", [src])])
     prepare_references(env.project)
 
     out = Image.open(env.project.refs_prepared_dir / "p1_ref.png")
-    # No upscaling: long edge stays at 300.
-    assert max(out.size) == 300
+    assert out.size == resolution_for_aspect(2 / 3, 1024)
+
+
+@_with_env
+def test_primary_resolution_matches_bridge_request(env):
+    # The whole point of the fix: the primary ref's pixel size must equal the
+    # resolution the bridge will ask Wan2GP for, for both orientations.
+    from lazycomics.wan2gp_bridge import _compute_resolution
+
+    for aspect in (2 / 3, 3 / 2, 1.0, 1 / 3):
+        src = env.make_src(f"s_{aspect:.3f}.png", 800, 800)
+        env.write_enriched("p1", aspect_ratio=aspect, characters=[_char("X", [src])])
+        prepare_references(env.project, force=True)
+        out = Image.open(env.project.refs_prepared_dir / "p1_ref.png")
+        want = tuple(int(x) for x in _compute_resolution(aspect, 1024).split("x"))
+        assert out.size == want, f"aspect {aspect}: ref {out.size} != bridge {want}"
 
 
 @_with_env

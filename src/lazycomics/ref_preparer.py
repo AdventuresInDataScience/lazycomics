@@ -2,10 +2,18 @@
 
 Builds the per-panel reference image stack that gets passed to the
 generator (Wan2GP / Flux Klein 9B). Each panel ends up with one
-**primary** ref, cropped to the panel's target aspect ratio with a
-face-aware crop (via MediaPipe), plus zero or more **supporting** refs
-(style, location, additional characters) that pass through at their
-native aspect ratio.
+**primary** ref, face-aware cropped to the panel's target aspect and then
+sized to *exactly* the pixel resolution the bridge will request, plus zero
+or more **supporting** refs (style, location, additional characters) that
+pass through at their native aspect ratio.
+
+The primary's exact sizing matters because Klein takes its output aspect
+from this image (the task's ``image_start``), overriding the ``resolution``
+field; Wan2GP then buckets it to the latent grid. A primary that isn't
+already on that grid gets snapped to a near-square canonical size, so the
+panel comes out the wrong shape. Both this module and ``wan2gp_bridge``
+derive the target ``(W, H)`` from ``geometry.resolution_for_aspect`` so
+they cannot drift.
 
 The primary ref is selected from the ``primary_character``'s registered
 images when the enricher has set that field — this ensures the ref
@@ -45,6 +53,7 @@ from PIL import Image
 
 from lazycomics import face_detector
 from lazycomics.asset_registry import get_style
+from lazycomics.geometry import resolution_for_aspect
 from lazycomics.models import Project, StyleAsset
 
 __all__ = ["prepare_references"]
@@ -137,10 +146,17 @@ def _prepare_one(
         print(f"[refs] {panel_id}: primary source missing: {primary_source}")
         return []
 
-    # Primary: crop to target aspect (face-aware), resize to working res.
+    # Primary ref → Klein's ``image_start``. Klein takes the *output* aspect
+    # from this image (overriding the task's ``resolution`` field) and Wan2GP
+    # buckets it to the latent grid, so it must be produced at *exactly* the
+    # resolution the bridge will request — same (W, H) the bridge computes.
+    # We face-aware crop to that aspect, then resize to the exact dimensions
+    # (upscaling a small source if need be: a conditioning image at the wrong
+    # size is worse than a slightly soft one at the right size).
+    target_w, target_h = resolution_for_aspect(target_aspect, working_resolution)
     img = Image.open(primary_source)
-    img = _crop_to_aspect(img, target_aspect)
-    img = _resize_long_edge(img, working_resolution)
+    img = _crop_to_aspect(img, target_w / target_h)
+    img = img.resize((target_w, target_h), Image.LANCZOS)
 
     primary_out = project.refs_prepared_dir / f"{panel_id}_ref.png"
     img.save(primary_out)

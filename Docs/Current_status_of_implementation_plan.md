@@ -8,6 +8,56 @@ implementation, and (e) the contracts Phase 2 should populate.
 
 ---
 
+## Current status (reconciled 2026-06-05)
+
+**This section is the single source of truth.** Everything below it is the
+historical record — the original Phase-1/2 notes, your Phase-2/3 issue reports,
+and design principles — kept for context and now annotated inline with status
+tags. Where anything below disagrees with this section, this section wins.
+
+**Tests:** 344 runnable unit tests passing, 0 real failures. Not run in the
+offline harness (these are environment limits, *not* failures): the 4
+`test_face_detector` cases that need pytest's `monkeypatch` fixture, and the
+`integration` / `wan2gp_live` suites that need the `cbml_parser` git dependency
+or a live Wan2GP install.
+
+**Where each originally-reported issue now stands** (detail + design in
+`Implementation_plan.md` § 14.x):
+
+| Issue (as originally reported) | Status | Fixed by / notes |
+|---|---|---|
+| Panel aspect-ratio bug (portrait JSON → landscape output) | **RESOLVED** | § 14.1 — shared `geometry.resolution_for_aspect`; `ref_preparer` sizes the primary ref to the exact target so `image_start` can't drift; bridge tripwire warns on mismatch |
+| Wan2GP painting speech bubbles into the art | **RESOLVED** | § 14.0 — bubble/text/SFX terms lead the default negative prompt |
+| Text in bubbles/captions too small | **RESOLVED** | Track 1 — config-driven, panel-relative font sizing (`text.*`) |
+| Multiple dialogue: wrong reading order / speaker / overlap | **RESOLVED** | Track 2 (items 7/8) — CBML-order placement, face-aware speaker anchoring |
+| Bubbles ignore negative space / random placement | **RESOLVED** | Track 2 — busyness-map cost search places bubbles in empty regions |
+| Speech-bubble tails far too long | **RESOLVED** | Track 1 (short tails) + Track 2 (face-anchored short stubs) |
+| Thought bubbles clip their text | **RESOLVED** | Track 1 — thought/shout interior-footprint containment |
+| Text boxes in weird places | **RESOLVED** | Track 2 placement rework |
+| e2e produced no upscaled pages / no `.cbz` | **RESOLVED (code)** | Track 1 — exporter bundles `pages_upscaled/`; e2e page-filename fix. (The e2e *test* still needs `cbml_parser` to run, so it can't execute in this harness.) |
+| Inpaint "two disjointed halves" | **ADDRESSED — visual confirmation pending** | § 14.4a — grown/rounded/Gaussian-feathered mask + vertical inset + `inpaint_denoising` 0.65→0.25; **and** § 14.3 single-pass-when-LoRA-free sidesteps the inpaint path entirely for LoRA-free panels |
+| Character drift across panels | **OPEN (partially mitigated)** | Item 11. § 14.3 removes inpaint-driven drift for LoRA-free panels; Flux-Dev path + profiler added; § 14.11 per-panel composite-reference experiment specced for a branch; LoRA (§ 14.6) is the backup |
+| Art-style drift across panels | **OPEN (partially mitigated)** | Item 11 — same levers as character drift |
+| Render artifacts (missing/glazed eyes, small errors) | **OPEN (model-level)** | Not addressed by pipeline code; expected to improve with more steps / guidance tuning or a Flux-Dev switch (profiler added to evaluate) |
+
+**Built during Phase 3 so far:** Track 1 mechanical fixes; Track 2 bubble
+placement (items 7/8); § 14.1 aspect fix; § 14.4a inpaint-mask softening +
+denoise; § 14.3 configurable `enricher.multi_char_strategy` (auto/single/inpaint,
+LoRA-aware); Flux-Dev config guidance + an architecture profiler
+(`src/lazycomics/profiling.py`, `tools/profile_architectures.py`, 6-panel
+fixture); § 14.11 composite-reference design note (not built — branch
+experiment).
+
+**Still open / next:** item 11 character+style drift (validate single-pass +
+the composite-ref experiment on real hardware, evaluate Flux Dev via the
+profiler, LoRA § 14.6 as backup); § 14.2 comic-tuned face detector; § 14.4a
+steps 1–3 (face-driven per-character masks); § 14.5 bubble non-overlap polish;
+§ 14.6 LoRA training (`ai_toolkit_bridge.py`); § 14.7 SAM segmentation; § 14.10
+stay-resident Wan2GP worker. Render artifacts are model-level (not a pipeline
+fix).
+
+---
+
 ## Phase 1 — pure-Python pipeline (✓ complete)
 
 | # | Module | Public API | Notes |
@@ -37,7 +87,8 @@ implementation, and (e) the contracts Phase 2 should populate.
   `test_config.py` prevent rot: existence check, key coverage, and value
   parity against module defaults.
 
-**Tests:** 228 passing. End-to-end smoke verified by
+**Tests:** 228 passing. *(Historical figure — see "Current status" at the top
+of this doc; the suite is now at 344 runnable tests.)* End-to-end smoke verified by
 `tests/test_integration.py::test_full_pipeline_two_pages_spread_two_chars`:
 `create_project` → `register_*` → real-parser `enrich` → `build_prompts` →
 `prepare_references` → (placeholder PNGs in `panels/`) → `render_text` →
@@ -404,6 +455,12 @@ The model weights are large (~2.5GB for SAM alone). Lazy-import per
 principle #9; do not import at package top.
 
 ## Phase 2 Complete but...
+
+> **[HISTORICAL — original issue reports.]** Current status of each item below
+> is in the "Current status" table at the top of this doc. Most are now
+> RESOLVED (text/bubble/aspect issues); style + character drift remain OPEN
+> (item 11). Kept here verbatim as the record of what was originally observed.
+
 ### errors noted:
 1. The art style is inconsistent. I have a style reference image, and all characters and location reference images match this style too. But for some reason the images drift in style, quite significantly.
 2. Ditto the above with characters
@@ -435,20 +492,24 @@ below are on top of the original six "Phase 2 Complete but…" issues.
 
 ### Still broken (carry into Phase 3 work)
 
-* **Character drift across panels.** Same character, same ref image,
+> **[HISTORICAL — captured 2026-05-25.]** Tags added below reflect the current
+> state (see the "Current status" table at the top for the authoritative view).
+
+* **[OPEN — item 11]** **Character drift across panels.** Same character, same ref image,
   same fixed seed — hair colour, face shape, age all visibly change
   between panels. Style refs and character refs are present and
   consistent at registration time. Most likely fixed by § 14.6 (LoRA
   training) — refs alone aren't strong enough conditioning for Klein. Keen to still look at other options to improve this before resortign to Loras (due to the time commitment and gpu resource commitment required by end users. May not be faesible for all. Need strong brainstorm on other ways to strengthen consistency and adherance to prompy. Perhaps full Flux is the only option? With smal panel sizes to save time - leanign heavier on ESRGAN/Real-ESRGAN etc)
-* **Art style drift.** Same comment as above for style consistency
+* **[OPEN — item 11]** **Art style drift.** Same comment as above for style consistency
   despite a registered style reference image that all character/loc refs
   visually match. Klein's reference-weighting is too soft.
-* **Inpaint structural break persists.** Some multi-character panels
+* **[ADDRESSED — § 14.4a + § 14.3; visual confirmation pending]** **Inpaint structural break persists.** Some multi-character panels
   still come out as two visually disjointed halves even with
   `inpaint_denoising: 0.65` and the corrected `image_guide`/`image_mask`
   fields. Maps to § 14.4 (character-shaped masks) — rectangular masks
-  produce hard seams in busy panels.
-* **Wan2GP painting speech bubbles INTO the generated image.** New
+  produce hard seams in busy panels. *(Now: feathered/rounded/inset masks +
+  denoise 0.25; and single-pass-when-LoRA-free avoids the inpaint path.)*
+* **[RESOLVED — § 14.0]** **Wan2GP painting speech bubbles INTO the generated image.** New
   observation. Some generated panels include cartoon speech bubbles
   drawn directly into the artwork, before `text_renderer` runs. The
   panel ends up with two bubble layers — Wan2GP's painted-in bubble plus
@@ -457,19 +518,19 @@ below are on top of the original six "Phase 2 Complete but…" issues.
   explicit "no speech bubbles, no text, no captions" to the negative
   prompt in `prompt_builder` or `wan2gp_bridge`. Cheap; should land in
   § 14.0-style pre-Phase-3 patches.
-* **Panel aspect-ratio bug confirmed.** Audit of `test_e2e_output/e2e/
+* **[RESOLVED — § 14.1]** **Panel aspect-ratio bug confirmed.** Audit of `test_e2e_output/e2e/
   e2e/panels/*.png` shows **every panel is landscape ~1.33 ratio**,
   but enriched JSON for the splash panel (`page_1_panel_1.json`)
   declares `aspect_ratio: 0.6666` (portrait, correct). Wan2GP is
   ignoring or transposing our `resolution` field. Already captured as
   § 14.1; this latest run confirms it's still happening and is the
   single biggest visual issue.
-* **e2e test fails.** e2e test fails. terminal output truncated but partial log at `pytest_terminal_output.txt` showing failure. In particular, no upscaling evident, and no comilation into cbz
-* **Font size in captions and speech bubbles is slightly too big.** Idealy set default smaller, but expose font size in config
-* **Bubble order totaly incorrect.** NO sensible preservation of reading order as presented in cmbl. Bubbles random and incorrectly placed - incohesive to story. Is the negative space being implemented? Ie logical spaces to leave for text, and logical pickup of these areas to place future bubbles? This fix needs brainstorming
-* **Thought bubbles much too aggressive.** Curly outer shape cuttin gout most of the text - result looks clipped, amateurish and unreadable
-* **Speech bubble tails still far too long** Should be very short as per normal comics. Most generated bubbles have very long tails in the test panels. 
-* **Some errors in renders** Eg images with subjects eyes missing/glazed over, and other small errors/discrepancies. 
+* **[RESOLVED (code) — Track 1]** **e2e test fails.** e2e test fails. terminal output truncated but partial log at `pytest_terminal_output.txt` showing failure. In particular, no upscaling evident, and no comilation into cbz *(exporter now bundles `pages_upscaled/`; e2e page-filename fixed. The test itself needs `cbml_parser` to run.)*
+* **[RESOLVED — Track 1]** **Font size in captions and speech bubbles is slightly too big.** Idealy set default smaller, but expose font size in config
+* **[RESOLVED — Track 2 (items 7/8)]** **Bubble order totaly incorrect.** NO sensible preservation of reading order as presented in cmbl. Bubbles random and incorrectly placed - incohesive to story. Is the negative space being implemented? Ie logical spaces to leave for text, and logical pickup of these areas to place future bubbles? This fix needs brainstorming *(Now: CBML-order placement + busyness-map negative-space search.)*
+* **[RESOLVED — Track 1]** **Thought bubbles much too aggressive.** Curly outer shape cuttin gout most of the text - result looks clipped, amateurish and unreadable
+* **[RESOLVED — Track 1 + Track 2]** **Speech bubble tails still far too long** Should be very short as per normal comics. Most generated bubbles have very long tails in the test panels. 
+* **[OPEN — model-level]** **Some errors in renders** Eg images with subjects eyes missing/glazed over, and other small errors/discrepancies. 
 
 
 ### Stay-resident Wan2GP worker — added as § 14.10

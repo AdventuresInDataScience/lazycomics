@@ -175,11 +175,25 @@ _EXPECTED_KEYS = [
     "assembly.bg_color",
     "assembly.stretch_tolerance",
     "assembly.fit_mode",
+    # enricher.py
+    "enricher.multi_char_strategy",
     # llm_refiner.py
     "llm.url",
     "llm.model",
     "llm.api_key",
     "llm.system_prompt",
+    # text_renderer.py
+    "text.dialogue_font_ratio",
+    "text.caption_font_ratio",
+    "text.sfx_font_ratio",
+    "text.min_font_px",
+    "text.font_scale",
+    "text.tail_frac",
+    # wan2gp_bridge.py (inpaint knobs)
+    "wan2gp.inpaint_denoising",
+    "wan2gp.inpaint_masking_strength",
+    "wan2gp.inpaint_mask_expand",
+    "wan2gp.inpaint_mask_feather",
 ]
 
 
@@ -224,3 +238,36 @@ def test_repo_config_assembly_defaults_match_module_defaults():
     assert cfg_get(cfg, "assembly.bg_color") == assembler._DEFAULT_BG_COLOR
     assert cfg_get(cfg, "assembly.stretch_tolerance") == assembler._DEFAULT_STRETCH_TOLERANCE
     assert cfg_get(cfg, "assembly.fit_mode") == assembler._DEFAULT_FIT_MODE
+
+
+def test_repo_config_text_defaults_match_module_defaults():
+    """Sample values for ``text.*`` must equal text_renderer's fallbacks."""
+    from lazycomics import text_renderer as tr  # noqa: PLC0415
+
+    cfg = load_config(_REPO_CONFIG)
+    assert cfg_get(cfg, "text.dialogue_font_ratio") == tr._DEFAULT_DIALOGUE_FONT_RATIO
+    assert cfg_get(cfg, "text.caption_font_ratio") == tr._DEFAULT_CAPTION_FONT_RATIO
+    assert cfg_get(cfg, "text.sfx_font_ratio") == tr._DEFAULT_SFX_FONT_RATIO
+    assert cfg_get(cfg, "text.min_font_px") == tr._DEFAULT_MIN_FONT_PX
+    assert cfg_get(cfg, "text.font_scale") == tr._DEFAULT_FONT_SCALE
+    assert cfg_get(cfg, "text.tail_frac") == tr._DEFAULT_TAIL_FRAC
+
+
+def test_repo_config_enricher_defaults_match_module_defaults():
+    """Sample value for ``enricher.multi_char_strategy`` must equal the fallback."""
+    from lazycomics import enricher  # noqa: PLC0415
+
+    cfg = load_config(_REPO_CONFIG)
+    assert cfg_get(cfg, "enricher.multi_char_strategy") == enricher._DEFAULT_MULTI_CHAR_STRATEGY
+
+
+def test_repo_config_inpaint_defaults_match_module_defaults():
+    """Sample values for the ``wan2gp`` inpaint knobs must equal the bridge
+    fallbacks, so the shipped file behaves identically to an absent one."""
+    from lazycomics import wan2gp_bridge as wb  # noqa: PLC0415
+
+    cfg = load_config(_REPO_CONFIG)
+    assert cfg_get(cfg, "wan2gp.inpaint_denoising") == wb._DEFAULT_INPAINT_DENOISING
+    assert cfg_get(cfg, "wan2gp.inpaint_masking_strength") == wb._DEFAULT_INPAINT_MASKING_STRENGTH
+    assert cfg_get(cfg, "wan2gp.inpaint_mask_expand") == wb._DEFAULT_INPAINT_MASK_EXPAND
+    assert cfg_get(cfg, "wan2gp.inpaint_mask_feather") == wb._DEFAULT_INPAINT_MASK_FEATHER

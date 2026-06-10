@@ -1,0 +1,49 @@
+## Architecture Profile Bench
+aspect: us-comic
+author: lazycomics
+genre: benchmark
+description: A neutral six-panel page for timing one Wan2GP architecture against another. One character per panel keeps every panel on the single-pass path so the timing reflects raw generation, not multi-inpaint passes.
+
+PAGE grid:3x2
+  A: [1, 1]
+  B: [2, 1]
+  C: [3, 1]
+  D: [1, 2]
+  E: [2, 2]
+  F: [3, 2]
+
+PANEL A
+loc: A_WORKSHOP
+chars: ROVER
+shot: wide establishing shot of a cluttered inventor's workshop
+mood: warm, curious
+
+PANEL B
+loc: A_WORKSHOP
+chars: ROVER
+shot: medium shot at the workbench
+mood: focused
+
+PANEL C
+loc: A_WORKSHOP
+chars: ROVER
+shot: closeup on hands assembling a small device
+mood: tense
+
+PANEL D
+loc: A_ROOFTOP
+chars: ROVER
+shot: wide shot on a rooftop at dusk, city skyline behind
+mood: hopeful
+
+PANEL E
+loc: A_ROOFTOP
+chars: ROVER
+shot: medium low angle looking up
+mood: determined
+
+PANEL F
+loc: A_ROOFTOP
+chars: ROVER
+shot: closeup reaction shot
+mood: quiet relief

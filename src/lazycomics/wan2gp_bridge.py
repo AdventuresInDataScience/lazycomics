@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Any
 
 from lazycomics.config import cfg_get, load_config
+from lazycomics.geometry import resolution_for_aspect
 from lazycomics.models import Project
 
 __all__ = ["generate_panels"]
@@ -281,7 +282,10 @@ def _run_multi_inpaint(
         mask_region = _get_character_region(
             char_name, bubble_lookup, len(inpaint_order), pass_idx,
         )
-        mask_path = _generate_mask(w, h, mask_region, project, pid, pass_idx)
+        mask_path = _generate_mask(
+            w, h, mask_region, project, pid, pass_idx,
+            feather=bridge_cfg["inpaint_mask_feather"],
+        )
 
         # Build character-focused prompt
         char_prompt = _build_inpaint_prompt(char_data, panel)
@@ -344,6 +348,24 @@ def _run_single_task_and_collect(
 # ---------------------------------------------------------------------------
 
 
+# Inpaint defaults (multi-character panels). Exposed as module constants so
+# the shipped config and the config-parity test stay in lockstep.
+#   denoising  — how much of the masked area is regenerated. 0.15-0.35 keeps
+#                the base panel's structure (the new character is painted *into*
+#                the existing scene rather than the half being redrawn from
+#                scratch, which is what produced the "two disjointed halves").
+#                0.25 is the middle of that range.
+#   feather    — Gaussian-blur radius applied to the mask, as a fraction of the
+#                panel's short edge. Soft mask edges blend the inpaint into the
+#                surrounding art instead of leaving a hard seam.
+#   mask_expand— Wan2GP-side dilation of the mask (pixels). Left at 0 since the
+#                lazycomics-generated mask already grows + feathers its own edge.
+_DEFAULT_INPAINT_DENOISING = 0.25
+_DEFAULT_INPAINT_MASKING_STRENGTH = 0.3
+_DEFAULT_INPAINT_MASK_EXPAND = 0
+_DEFAULT_INPAINT_MASK_FEATHER = 0.04
+
+
 def _load_bridge_config(config: dict[str, Any]) -> dict[str, Any]:
     """Extract and validate the ``wan2gp`` section with defaults."""
     wgp_root = cfg_get(config, "wan2gp.wgp_root", None)
@@ -370,9 +392,10 @@ def _load_bridge_config(config: dict[str, Any]) -> dict[str, Any]:
             cfg_get(config, "wan2gp.loras_dir", "")
             or str(Path(wgp_root).expanduser().resolve() / "loras")
         ).expanduser().resolve(),
-        "inpaint_denoising": cfg_get(config, "wan2gp.inpaint_denoising", 0.65),
-        "inpaint_masking_strength": cfg_get(config, "wan2gp.inpaint_masking_strength", 0.3),
-        "inpaint_mask_expand": cfg_get(config, "wan2gp.inpaint_mask_expand", 0),
+        "inpaint_denoising": cfg_get(config, "wan2gp.inpaint_denoising", _DEFAULT_INPAINT_DENOISING),
+        "inpaint_masking_strength": cfg_get(config, "wan2gp.inpaint_masking_strength", _DEFAULT_INPAINT_MASKING_STRENGTH),
+        "inpaint_mask_expand": cfg_get(config, "wan2gp.inpaint_mask_expand", _DEFAULT_INPAINT_MASK_EXPAND),
+        "inpaint_mask_feather": cfg_get(config, "wan2gp.inpaint_mask_feather", _DEFAULT_INPAINT_MASK_FEATHER),
     }
 
 
@@ -417,6 +440,7 @@ def _build_wangp_task(
     # Supporting refs → image_refs (additional conditioning).
     if refs:
         task["image_start"] = str(refs[0])
+        _warn_on_resolution_mismatch(refs[0], resolution, panel_data.get("panel_id", "?"))
     if len(refs) > 1:
         task["image_refs"] = [str(r) for r in refs[1:]]
 
@@ -467,9 +491,9 @@ def _build_inpaint_task(
         "batch_size": 1,
         "seed": bridge_cfg["seed"] if bridge_cfg["seed"] is not None else -1,
         "video_prompt_type": "VAG",
-        "denoising_strength": bridge_cfg.get("inpaint_denoising", 0.65),
-        "masking_strength": bridge_cfg.get("inpaint_masking_strength", 0.3),
-        "mask_expand": bridge_cfg.get("inpaint_mask_expand", 0),
+        "denoising_strength": bridge_cfg.get("inpaint_denoising", _DEFAULT_INPAINT_DENOISING),
+        "masking_strength": bridge_cfg.get("inpaint_masking_strength", _DEFAULT_INPAINT_MASKING_STRENGTH),
+        "mask_expand": bridge_cfg.get("inpaint_mask_expand", _DEFAULT_INPAINT_MASK_EXPAND),
         "image_guide": str(source_image),
         "image_mask": str(mask_image),
         "activated_loras": activated_loras or [],
@@ -492,19 +516,31 @@ def _get_character_region(
 
     Uses ``bubble_layout`` position if available (character is near their
     speech bubble). Falls back to even horizontal distribution.
+
+    The region is inset slightly from the top and bottom edges so the mask
+    reads as a standing-figure band rather than a full-panel-height slab.
+    A slab that spans the entire height and half the width is what makes a
+    multi-character panel come out as two disjointed halves; combined with
+    the feathered mask edge in :func:`_generate_mask`, the inset keeps the
+    repaint confined to where the character actually stands.
     """
+    # Vertical band: small top margin (usually background/sky), reach the
+    # bottom edge (feet). Tunable here rather than per-call.
+    y = 0.06
+    h = 0.94
+
     bubble = bubble_lookup.get(char_name)
     if bubble:
-        # Centre the mask on the bubble's x position, full height
+        # Centre the mask on the bubble's x position.
         cx = bubble["x_frac"] + bubble["width_frac"] / 2
         region_w = max(0.25, 1.0 / total_chars)
         x = max(0.0, cx - region_w / 2)
-        return (x, 0.0, min(region_w, 1.0 - x), 1.0)
+        return (x, y, min(region_w, 1.0 - x), h)
 
     # Fallback: even horizontal stripe
     stripe_w = 1.0 / total_chars
     x = char_index * stripe_w
-    return (x, 0.0, stripe_w, 1.0)
+    return (x, y, stripe_w, h)
 
 
 def _generate_mask(
@@ -514,23 +550,53 @@ def _generate_mask(
     project: Project,
     pid: str,
     pass_idx: int,
+    *,
+    feather: float = _DEFAULT_INPAINT_MASK_FEATHER,
 ) -> Path:
-    """Create a mask PNG: black background, white rectangle at ``region``.
+    """Create a soft inpaint mask PNG (black = preserve, white = repaint).
 
-    White = area to repaint. Saved to a temp location within the project
-    so it persists long enough for the queue zip to embed it.
+    Unlike a hard 0/255 rectangle — which leaves a visible seam where the
+    repainted region butts against the untouched art — this mask:
+
+    * draws a **rounded** rectangle (corners softened, no sharp box);
+    * **grows** the box outward by roughly the feather radius first, so the
+      blur in the next step eats into the margin rather than the character's
+      core region;
+    * **feathers** the whole mask with a Gaussian blur of radius
+      ``feather * min(width, height)``, producing a gradient edge that lets
+      the inpaint blend smoothly into the surrounding panel.
+
+    ``feather`` is a fraction of the panel's short edge (``0`` disables the
+    blur and yields a plain rounded rect). Saved under ``panels/_masks/`` so
+    it persists long enough for the queue zip to embed it.
     """
-    from PIL import Image, ImageDraw
-
-    mask = Image.new("L", (width, height), 0)
-    draw = ImageDraw.Draw(mask)
+    from PIL import Image, ImageDraw, ImageFilter
 
     x_frac, y_frac, w_frac, h_frac = region
     x0 = int(x_frac * width)
     y0 = int(y_frac * height)
     x1 = int((x_frac + w_frac) * width)
     y1 = int((y_frac + h_frac) * height)
-    draw.rectangle([x0, y0, x1, y1], fill=255)
+
+    feather_px = max(0, int(feather * min(width, height)))
+
+    # Grow the box by the feather radius (clamped to the canvas) so the blur
+    # softens the edge without shrinking the intended repaint core.
+    gx0 = max(0, x0 - feather_px)
+    gy0 = max(0, y0 - feather_px)
+    gx1 = min(width, x1 + feather_px)
+    gy1 = min(height, y1 + feather_px)
+
+    mask = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(mask)
+    radius = int(min(gx1 - gx0, gy1 - gy0) * 0.35)
+    if radius > 0:
+        draw.rounded_rectangle([gx0, gy0, gx1, gy1], radius=radius, fill=255)
+    else:
+        draw.rectangle([gx0, gy0, gx1, gy1], fill=255)
+
+    if feather_px > 0:
+        mask = mask.filter(ImageFilter.GaussianBlur(feather_px))
 
     masks_dir = project.panels_dir / "_masks"
     masks_dir.mkdir(parents=True, exist_ok=True)
@@ -570,28 +636,47 @@ def _build_inpaint_prompt(
 # ---------------------------------------------------------------------------
 
 
+def _warn_on_resolution_mismatch(
+    image_start: Path, resolution: str, panel_id: str, tol: float = 0.05,
+) -> None:
+    """Warn when ``image_start``'s pixel size diverges from ``resolution``.
+
+    Klein takes its output aspect from ``image_start``, so if the prepared
+    primary ref isn't (close to) the requested ``WxH`` the panel comes out
+    the wrong shape. ``ref_preparer`` now sizes the primary exactly, so this
+    should never fire — it's a tripwire that catches a future regression
+    (e.g. ``working_resolution`` drifting from ``base_resolution``).
+    """
+    try:
+        want_w, want_h = (int(x) for x in resolution.split("x"))
+        from PIL import Image
+        with Image.open(image_start) as im:
+            got_w, got_h = im.size
+    except Exception:
+        return  # never let a diagnostic break generation
+    if want_w <= 0 or want_h <= 0:
+        return
+    dw = abs(got_w - want_w) / want_w
+    dh = abs(got_h - want_h) / want_h
+    if dw > tol or dh > tol:
+        print(
+            f"[wan2gp] WARNING: {panel_id} image_start is {got_w}x{got_h} but "
+            f"requested {want_w}x{want_h} — Klein keys output aspect off "
+            f"image_start, so the panel may come out the wrong shape.",
+            flush=True,
+        )
+
+
 def _compute_resolution(aspect_ratio: float, base_resolution: int) -> str:
     """Convert a panel aspect ratio to a ``"WxH"`` resolution string.
 
-    The long edge is ``base_resolution``; the short edge is derived from
-    the aspect ratio and snapped to the nearest multiple of 64 (a common
-    requirement for diffusion model latent dimensions).
+    Delegates to :func:`lazycomics.geometry.resolution_for_aspect` so the
+    bridge and ``ref_preparer`` derive panel dimensions from one place — the
+    prepared ``image_start`` reference must match this exactly or Klein
+    snaps it to the wrong shape (see ``geometry`` module docstring).
     """
-    if aspect_ratio >= 1.0:
-        # Landscape or square: width is the long edge.
-        w = base_resolution
-        h = max(64, _snap_64(int(round(base_resolution / aspect_ratio))))
-    else:
-        # Portrait: height is the long edge.
-        h = base_resolution
-        w = max(64, _snap_64(int(round(base_resolution * aspect_ratio))))
-
+    w, h = resolution_for_aspect(aspect_ratio, base_resolution)
     return f"{w}x{h}"
-
-
-def _snap_64(value: int) -> int:
-    """Round to the nearest multiple of 64."""
-    return ((value + 32) // 64) * 64
 
 
 # ---------------------------------------------------------------------------

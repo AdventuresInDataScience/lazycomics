@@ -191,8 +191,10 @@ def test_full_pipeline_e2e():
     pages = lc.assemble_pages(project, page_height_px=800, gutter_px=8)
     assert len(pages) > 0, "expected pages to be assembled"
     for pnum in range(1, len(pages) + 1):
-        ppath = project.pages_dir / f"page_{pnum}.png"
-        assert ppath.is_file()
+        # Pages are written zero-padded (page_001.png), matching the
+        # assembler, exporter, and the rest of the test suite.
+        ppath = project.pages_dir / f"page_{pnum:03d}.png"
+        assert ppath.is_file(), f"expected assembled page at {ppath}"
         img = Image.open(ppath)
         assert img.size[0] > 100 and img.size[1] > 100, \
             f"page {pnum} too small: {img.size}"

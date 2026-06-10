@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from lazycomics.asset_registry import get_character, get_location
+from lazycomics.config import cfg_get, load_config
 from lazycomics.models import (
     BubbleRegion,
     CaptionBox,
@@ -32,19 +33,40 @@ from lazycomics.models import (
 __all__ = ["enrich"]
 
 
-def enrich(project: Project) -> list[PanelGenerationRequest]:
+# Multi-character generation strategy (config: enricher.multi_char_strategy):
+#   auto    — single-pass when every character on the panel is LoRA-free
+#             (the inpaint path only adds drift when there's no per-character
+#             LoRA to apply); multi_inpaint when any character has a LoRA so
+#             each gets its own dedicated pass. Interaction keywords (hugging,
+#             fighting, ...) always force single-pass since inpaint would
+#             overwrite physically-overlapping characters.
+#   single  — always one combined pass naming every character (no inpaint).
+#   inpaint — always base pass + one inpaint pass per non-primary character.
+_DEFAULT_MULTI_CHAR_STRATEGY = "auto"
+_VALID_MULTI_CHAR_STRATEGIES = ("auto", "single", "inpaint")
+
+
+def enrich(project: Project, *, config: dict[str, Any] | None = None) -> list[PanelGenerationRequest]:
     """Parse the project's CBML and write one enriched JSON per panel.
 
     Returns the list of :class:`PanelGenerationRequest` objects produced
     (in reading order). Writes
     ``<project>/enriched/page_<N>_panel_<M>.json`` per panel (1-based
     indices for human readability).
+
+    ``config`` supplies behavioural knobs (currently
+    ``enricher.multi_char_strategy``); ``None`` loads it via
+    :func:`load_config`.
     """
     from cbml_parser import CBMLParser  # lazy: it's a git dep, not always present at import time
 
+    if config is None:
+        config = load_config()
+    strategy_mode = cfg_get(config, "enricher.multi_char_strategy", _DEFAULT_MULTI_CHAR_STRATEGY)
+
     parser = CBMLParser()
     comic = parser.parse_file(str(project.cbml_path))
-    return _enrich_from_comic(project, comic)
+    return _enrich_from_comic(project, comic, strategy_mode=strategy_mode)
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +74,12 @@ def enrich(project: Project) -> list[PanelGenerationRequest]:
 # ---------------------------------------------------------------------------
 
 
-def _enrich_from_comic(project: Project, comic: Any) -> list[PanelGenerationRequest]:
+def _enrich_from_comic(
+    project: Project,
+    comic: Any,
+    *,
+    strategy_mode: str = _DEFAULT_MULTI_CHAR_STRATEGY,
+) -> list[PanelGenerationRequest]:
     """Build PanelGenerationRequests from an already-parsed Comic, write JSON."""
     aspect_w, aspect_h = comic.aspect  # required in v1.1; parser already resolved presets
     panels: list[PanelGenerationRequest] = []
@@ -62,6 +89,7 @@ def _enrich_from_comic(project: Project, comic: Any) -> list[PanelGenerationRequ
             panel = _build_panel(
                 project, page, parser_panel, panel_idx,
                 max_col, max_row, aspect_w, aspect_h,
+                strategy_mode=strategy_mode,
             )
             panels.append(panel)
             _write_panel(project, panel)
@@ -90,6 +118,8 @@ def _build_panel(
     max_row: int,
     aspect_w: int,
     aspect_h: int,
+    *,
+    strategy_mode: str = _DEFAULT_MULTI_CHAR_STRATEGY,
 ) -> PanelGenerationRequest:
     page_idx = page.index  # parser uses 0-based
     panel_id = f"page_{page_idx + 1}_panel_{panel_idx + 1}"
@@ -114,12 +144,14 @@ def _build_panel(
             chars.append(CharacterRef(identifier=name))
 
     char_names = [c.identifier for c in chars]
+    any_lora = any(c.lora is not None for c in chars)
     dialogue = [
         DialogueLine(character=d.character, text=d.text, bubble_type=d.bubble_type)
         for d in parser_panel.dialogue
     ]
     strategy = _compute_char_strategy(
         char_names, parser_panel.shot or "", parser_panel.action or "",
+        any_lora=any_lora, mode=strategy_mode,
     )
     primary = _select_primary_character(
         char_names, parser_panel.shot or "", dialogue,
@@ -208,27 +240,52 @@ def _compute_char_strategy(
     char_names: list[str],
     shot_hint: str = "",
     action: str = "",
+    *,
+    any_lora: bool = False,
+    mode: str = _DEFAULT_MULTI_CHAR_STRATEGY,
 ) -> str:
-    """``"single"`` for 0–1 characters, ``"multi_inpaint"`` for 2+.
+    """Decide ``"single"`` vs ``"multi_inpaint"`` for a panel.
 
-    Auto-downgrades to ``"single"`` when the ``shot`` or ``action`` text
-    contains interaction keywords that imply physical overlap between
-    characters (fighting, embracing, carrying, etc.). Multi-pass
-    inpainting would overwrite earlier characters in these scenes, so a
-    single combined pass produces better results.
+    A 0–1 character panel is always ``"single"`` — there's nothing to inpaint.
 
-    The wan2gp_bridge uses this to decide whether to generate the panel in
-    one pass or to run multiple inpaint passes (one per additional character).
+    For 2+ characters, ``mode`` (``enricher.multi_char_strategy``) decides:
+
+    * ``"single"`` — always one combined pass naming every character.
+    * ``"inpaint"`` — always base pass + one inpaint pass per non-primary
+      character.
+    * ``"auto"`` (default) — single-pass unless inpaint actually buys
+      something:
+        - interaction keywords (hugging, fighting, ...) → ``"single"``,
+          because inpaint would overwrite physically-overlapping characters;
+        - no character has a LoRA → ``"single"``, because with no
+          per-character adapter the inpaint pass does nothing the combined
+          prompt can't, and only adds drift;
+        - otherwise → ``"multi_inpaint"`` so each LoRA character gets its
+          own dedicated pass.
+
+    The wan2gp_bridge reads the resulting ``char_generation_strategy`` to
+    route the panel (single batch path vs sequential inpaint).
     """
+    if mode not in _VALID_MULTI_CHAR_STRATEGIES:
+        raise ValueError(
+            f"enricher.multi_char_strategy must be one of "
+            f"{_VALID_MULTI_CHAR_STRATEGIES}, got {mode!r}"
+        )
+
     if len(char_names) < 2:
         return "single"
+    if mode == "single":
+        return "single"
+    if mode == "inpaint":
+        return "multi_inpaint"
 
-    # Check for interaction keywords that imply character overlap
+    # auto
     combined = f"{shot_hint} {action}".lower()
     for kw in _INTERACTION_KEYWORDS:
         if kw in combined:
             return "single"
-
+    if not any_lora:
+        return "single"
     return "multi_inpaint"
 
 

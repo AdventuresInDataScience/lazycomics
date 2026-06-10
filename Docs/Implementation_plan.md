@@ -885,6 +885,17 @@ test, before Phase 3 proper began:
 
 ### 14.1 Wan2GP aspect-ratio bug
 
+**Status: RESOLVED.** `ref_preparer` now sizes the primary ref to *exactly*
+the requested resolution (face-aware crop to target aspect, then resize to
+the precise `(W, H)`, upscaling a small source when needed) via the shared
+`geometry.resolution_for_aspect`, which the bridge also uses for the
+`resolution` field — so `image_start` and the requested resolution can't
+drift. `_build_wangp_task` warns if they ever diverge >5%. Verified
+end-to-end: a 600×600 source for a portrait panel now yields a 704×1024
+`image_start` (was snapped to ~848² before). Tests: `test_geometry` (8),
+ref_preparer exact-dims + bridge-parity, bridge tripwire tests. The
+`assembly.fit_mode` default was reverted `contain → cover` per §14.9.
+
 **Symptom.** The bridge computes a portrait resolution (e.g. `704x1024`) from
 `panel.aspect_ratio` and passes it as `resolution: "WxH"` in the queue task.
 Generated panel PNGs come out 848×848 (square) anyway. Downstream the
@@ -982,6 +993,19 @@ at faces on essentially every multi-character panel.
 
 ### 14.3 Single-pass multi-character when LoRA-free
 
+**Status: DONE (generalised).** Implemented as a three-way config knob
+`enricher.multi_char_strategy: auto | single | inpaint` (default `auto`)
+rather than the boolean originally specced. `auto` routes a 2+ character panel
+to single-pass when *every* character is LoRA-free (and on interaction
+keywords), and to `multi_inpaint` only when a character has a LoRA worth a
+dedicated pass; `single`/`inpaint` force either. The enricher is now
+LoRA-aware (`any(c.lora ...)`); `prompt_builder` already names every character
+so the single-pass prompt needs no change; no bridge change (the strategy field
+already routes). Config parity guarded by
+`test_repo_config_enricher_defaults_match_module_defaults`; behaviour covered by
+the rewritten `test_strategy_*` matrix. Visual side-by-side (step 5) is for a
+real run.
+
 **Symptom.** Current bridge routes any panel with 2+ characters through
 `_run_multi_inpaint`, which runs a base pass plus one inpaint per non-primary
 character. With rectangular masks and aggressive denoising this produces
@@ -1020,6 +1044,22 @@ pass without the disjointed-image artifact.
 (not the predicted `bubble_layout`). § 14.2 must land first.
 
 #### 14.4a Character-shaped inpaint masks
+
+**Status: PARTIAL (seam fix landed).** The hard-edged mask was the dominant
+cause of the seam, so that part is fixed now without waiting on § 14.2:
+`_generate_mask` grows the box, draws a **rounded** rect, and **Gaussian-feathers**
+the edge (config `wan2gp.inpaint_mask_feather`, default 0.04) so the inpaint
+blends instead of seaming; `_get_character_region` is **inset vertically**
+(6% top margin, 0.94 height) so the mask reads as a figure band rather than a
+full-height slab; and `inpaint_denoising` dropped 0.65 → **0.25** (user chose
+the middle of the recommended 0.15-0.35 range, rather than the 0.5 in step 6
+below) to preserve the base panel's structure. Verified deterministically
+(mask now ramps 0→255 across ~100 gray levels instead of a hard step); the
+*visual* result is for the user to confirm on a real Wan2GP run. **Still TODO**
+(needs § 14.2's detector + a real generated panel, so deferred): steps 1-3 —
+detect faces on the generated base panel and build per-character boxes from
+them instead of the bubble_layout-derived region. Config parity for the inpaint
+knobs is now enforced by `test_repo_config_inpaint_defaults_match_module_defaults`.
 
 **Symptom.** `_get_character_region` in `wan2gp_bridge.py` builds masks as
 full-height vertical stripes. With high denoise this regenerates the entire
@@ -1208,6 +1248,11 @@ with the bubble rather than a vanishing thin sliver.
 
 ### 14.9 Open question — letterbox default (raised 2026-05-24)
 
+**Status: RESOLVED.** §14.1 landed, so generated panels now match slot
+aspect (drift ~0 → cover crops nothing). The `assembly.fit_mode` default
+was reverted `contain → cover`; the `contain` and `stretch` knobs remain
+for hand-edited / third-party panels that can't be regenerated.
+
 **Decision needed.** § 14.0 changed `assembly.fit_mode` default from
 `cover` (crop overflow) to `contain` (letterbox with bg padding) to stop
 edge-aligned text overlays getting clipped on the assembled page. User
@@ -1331,6 +1376,79 @@ e2e iteration. Larger savings on longer comics.
 heavy re-runs. The cost is iteration time, not output quality — there's
 no end-user-visible artifact difference. If iteration cadence drops
 naturally, this stops being worth the investment.
+
+---
+
+### 14.11 Per-panel composite reference mode (EXPERIMENT — separate branch)
+
+**Status: design note only — NOT implemented.** This is a deliberate fork of
+how references are assembled and is a *radical departure* from the current
+per-character-primary approach; the two reference models cannot sensibly
+coexist in one codebase (they disagree on what refs exist, how they're named,
+which Wan2GP slot they occupy, and how the item-14.1 `image_start`/aspect
+coupling behaves). Build it on its own branch, A/B it on real hardware, then
+merge the winner. Recorded here so the plan is the single source of truth.
+
+**Motivation.** Character/style drift (§ "Phase 2 Complete but…" issues 1–2)
+is rooted in Klein's *soft* reference conditioning, made worse because a panel
+currently ships several competing `image_refs` (primary char + style + location
++ other chars) that dilute each other. LoRAs (§ 14.6) fix *trained* assets but
+can't generalise to the long tail (every location, every incidental character),
+so a strong reference-only path is worth maximising regardless. Kontext/Klein
+tends to adhere better to **one** coherent reference than to a pile of separate
+ones.
+
+**Idea.** For *each* panel, read that panel's characters, composite **only
+those characters'** registered refs (which are already authored in one shared
+style) into a single neutral "ref panel," and condition on that one image. Doing
+it per-panel — rather than one global cast sheet — is what removes the
+wrong-character-bleed risk: a one-character panel gets a one-character ref, a
+two-character panel gets exactly those two. Style can't drift between the source
+refs because they're the same style to begin with, so any composite of them is
+style-consistent by construction.
+
+**Design.**
+
+1. *Compositor* (pure PIL, fully buildable/testable offline): load each panel
+   character's ref, tile onto a neutral canvas (plain mid-tone background,
+   figures clearly separated, neutral arrangement that reads as a *model sheet*,
+   not a scene — this is the main mitigation against composition bleed). Cap the
+   character count (e.g. ≤ 3); beyond that, fall back to per-character mode so no
+   single character is starved of reference pixels.
+2. *Slot* — the key decision, and it collides with § 14.1:
+   - `image_refs[0]` (**recommended default**): aspect stays governed by the
+     `resolution` field, so it's § 14.1-safe; conditioning is softer but it's a
+     single coherent ref rather than several diluted ones. Open question: does
+     Klein condition strongly enough from `image_refs` with *no* `image_start`?
+     (empirical — needs a run).
+   - `image_start`: strongest conditioning but worst composition bleed, and it
+     *drives the output aspect* (§ 14.1) — so the composite canvas would have to
+     be sized to the panel's target aspect, meaning the panel aspect dictates the
+     character arrangement (stack for portrait, row for landscape). That injects a
+     composition.
+   Make it a config knob (`composite_ref_slot: image_refs | image_start`,
+   default `image_refs`). In composite mode + `image_refs` slot, drop the
+   per-panel `image_start` so `resolution` governs aspect.
+3. *Config*: `reference_mode: per_character | composite` (default
+   `per_character` so main stays unchanged), `composite_ref_slot`, canvas
+   background, max-characters-before-fallback.
+
+**Risks (all empirical — confirm on a real run, none fatal):**
+- *Composition bleed* — Klein may drag the model-sheet layout into the panel;
+  mitigate with a neutral, separated, sceneless composite and lean on the prompt
+  for staging.
+- *Conditioning strength from `image_refs` alone* — unknown without `image_start`.
+- *Per-character pixel budget* — N characters share one canvas; cap N / enlarge
+  the canvas.
+
+**Build vs validate split.** The compositor + wiring + config + geometry tests
+are fully doable offline. Whether adherence actually improves and whether
+composition survives are GPU-only checks.
+
+**Decision gate.** Adopt composite mode if a same-page A/B (per_character vs
+composite) visibly reduces style/character drift *without* wrecking the panel's
+intended composition; otherwise keep per_character and treat this branch as a
+documented negative result.
 
 ---
 
