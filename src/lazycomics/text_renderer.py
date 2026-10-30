@@ -8,8 +8,8 @@ Three overlay kinds per panel:
   seven anchors (six corners + ``center``). No background box; rendered
   with a contrasting outline for legibility on any background.
 * **Dialogue bubbles** (CBML ``NAME: "text"``): per-type shape with text
-  inside, placed within the speaker's ``bubble_layout`` region, and
-  pointing a tail at any detected face inside that region.
+  inside, laid out in CBML reading order near the speaker, with a short
+  tail toward the speaker's face.
 
 Four bubble types, each with a distinct shape:
 
@@ -20,32 +20,40 @@ Four bubble types, each with a distinct shape:
   whisper      rectangle with dashed border; no tail
   ============ ====================================================
 
-Face-aware placement: ``_detect_all_faces`` returns all face bboxes via
-MediaPipe; each speaker's bubbles are placed in their ``bubble_layout``
-region with top-vs-bottom chosen to avoid the face there. The tail
-anchors at the face centre when a face is found inside the speaker's
-region, or at the closest unique face when only one face exists in the
-whole panel. Off-target speakers (no matchable face) skip the tail.
+Face-aware placement: ``_detect_all_faces`` returns all face bboxes (hybrid
+YuNet + MediaPipe). Panel characters are matched to faces using the
+enricher's predicted left-to-right order as a prior (see
+``_match_characters_to_faces``); a speaker with no confident match gets no
+tail rather than a wrong one. Best-effort caveat: the match is positional,
+so a panel where the generator mirrored the predicted order gets mirrored
+tails — fixing that needs identity (Docs/PLAN.md W3.2).
 
-Best-effort caveat — for multi-character panels with no Phase 2
-inpaint info, character identity is inferred by document-order matching
-to the ``bubble_layout`` regions, not from per-character bounding boxes
-in the generated image. Phase 2's ``inpaint_manager`` is expected to
-write actual painted regions back to the panel JSON; this renderer will
-prefer that truth source when present (see TODO at the top of
-``_render_dialogue``).
+Bubbles are then laid out together (``_layout_bubbles``) so they read in
+CBML order by construction, without overlapping each other or the
+captions/SFX.
 
 The output PNG may be reviewed and hand-overwritten; the renderer skips
 panels whose output already exists unless ``force=True``.
 
 Alongside each output PNG it writes ``panels_text/<panel_id>.layout.json``:
-what it placed and why (detected faces, each bubble's rect / tail anchor in
-CBML line order, caption and SFX boxes). ``lazycomics.review`` reads it to
-check reading order and overlaps without re-deriving the layout.
+what it placed and why (detected faces, the character→face matches, each
+bubble's rect / tail anchor in CBML line order, caption and SFX boxes).
+``lazycomics.review`` reads it to check reading order and overlaps without
+re-deriving the layout.
+
+It also writes the faces and matches it used back into the panel's enriched
+JSON as ``detected_faces`` / ``actual_character_regions`` (with
+``detected_faces_for``, a hash of the panel image). On a later render of the
+*same* panel image they're reused instead of re-detected, so re-renders are
+deterministic and a hand-corrected match sticks; a regenerated panel image
+has a different hash, so stale matches are ignored. ``enrich()`` rewrites
+the enriched JSON and clears them.
 """
 
 from __future__ import annotations
 
+import hashlib
+import itertools
 import json
 import math
 import platform
@@ -65,14 +73,21 @@ __all__ = ["render_text"]
 # Tunable defaults (three-tier: arg → config "text.<key>" → these)
 # ---------------------------------------------------------------------------
 #
-# Font sizes are expressed as a fraction of the panel's *width*, then scaled
-# by ``font_scale`` and floored at ``min_font_px``. Width-relative keeps text
-# legible across the wildly different panel sizes a comic produces (a 576px
-# grid cell vs a 1184px splash) without per-panel tuning. Bump ``font_scale``
-# to enlarge everything at once, or set a per-type ratio for finer control.
-_DEFAULT_DIALOGUE_FONT_RATIO = 0.030   # ~31px on a 1024px-wide panel
-_DEFAULT_CAPTION_FONT_RATIO = 0.028    # captions a touch smaller than dialogue
-_DEFAULT_SFX_FONT_RATIO = 0.050        # SFX stay punchy/large
+# Font sizes are expressed as a fraction of the panel's size S = sqrt(W*H),
+# then scaled by ``font_scale`` and floored at ``min_font_px``. Area-based
+# rather than width-based so tall narrow panels (a 224x1024 strip) don't get
+# the smallest text in the book. The ratios were tuned when every panel was
+# 4:3 under width-scaling, so they're the old width ratios x sqrt(4/3): a 4:3
+# panel keeps exactly its old size. Bump ``font_scale`` to enlarge everything
+# at once, or set a per-type ratio for finer control.
+_DEFAULT_DIALOGUE_FONT_RATIO = 0.035   # ~31px on a 1024x768 panel
+_DEFAULT_CAPTION_FONT_RATIO = 0.032    # captions a touch smaller than dialogue
+_DEFAULT_SFX_FONT_RATIO = 0.058        # SFX stay punchy/large
+# Widest a bubble / caption may wrap to, as a fraction of S (same sqrt(4/3)
+# conversion from the old 0.42 / 0.40 of width), capped at the panel width
+# minus margins so narrow panels use most of their width.
+_BUBBLE_MAX_WIDTH_FRAC = 0.485
+_CAPTION_MAX_WIDTH_FRAC = 0.462
 _DEFAULT_MIN_FONT_PX = 16              # never drop below this, even on tiny panels
 _DEFAULT_FONT_SCALE = 1.0              # global multiplier on every text size
 # Tail length as a fraction of the panel's *short* edge, floored at 16px.
@@ -80,6 +95,9 @@ _DEFAULT_FONT_SCALE = 1.0              # global multiplier on every text size
 # leader lines that traverse the panel.
 _DEFAULT_TAIL_FRAC = 0.05              # ~38px on a 768px-tall panel
 _TAIL_MIN_PX = 16
+# Shortest tail ever drawn: a speaker right under the bubble still gets a
+# visible stub, not a 2px sliver (old plan §14.8d).
+_TAIL_STUB_PX = 12
 
 
 def _font_paths_for_platform() -> list[str]:
@@ -166,13 +184,22 @@ def render_text(
             continue
 
         panel_data = json.loads(enriched_path.read_text(encoding="utf-8"))
+        panel_hash = hashlib.sha1(panel_path.read_bytes()).hexdigest()
+        known = panel_data if panel_data.get("detected_faces_for") == panel_hash else {}
         img = Image.open(panel_path).convert("RGBA")
         layout: dict[str, Any] = {"size": list(img.size)}
-        img = _render_one(img, panel_data, text_cfg, record=layout)
+        img = _render_one(img, panel_data, text_cfg, record=layout, known=known)
         img.convert("RGB").save(out_path)
         out_path.with_suffix(".layout.json").write_text(
             json.dumps(layout, indent=2), encoding="utf-8",
         )
+        if "faces" in layout:  # dialogue was laid out: persist what was decided
+            panel_data["detected_faces"] = layout["faces"]
+            panel_data["actual_character_regions"] = layout["regions"]
+            panel_data["detected_faces_for"] = panel_hash
+            enriched_path.write_text(
+                json.dumps(panel_data, indent=2, ensure_ascii=False), encoding="utf-8",
+            )
         results[panel_id] = out_path
 
     return results
@@ -190,10 +217,16 @@ def _resolve_text_cfg(config: dict[str, Any]) -> dict[str, float]:
     }
 
 
-def _font_px(ratio: float, panel_w: int, text_cfg: dict[str, float]) -> int:
-    """Panel-width-relative font size, scaled and floored per config."""
+def _font_px(ratio: float, panel_w: int, panel_h: int,
+             text_cfg: dict[str, float]) -> int:
+    """Font size relative to the panel's sqrt(W*H), scaled and floored per config."""
     return max(int(text_cfg["min_font"]),
-               int(panel_w * ratio * text_cfg["font_scale"]))
+               int(math.sqrt(panel_w * panel_h) * ratio * text_cfg["font_scale"]))
+
+
+def _wrap_width(frac: float, panel_w: int, panel_h: int, margin: int) -> int:
+    """Max wrap width: ``frac`` of sqrt(W*H), but never wider than the panel allows."""
+    return min(panel_w - 2 * margin, int(math.sqrt(panel_w * panel_h) * frac))
 
 
 # ---------------------------------------------------------------------------
@@ -203,15 +236,22 @@ def _font_px(ratio: float, panel_w: int, text_cfg: dict[str, float]) -> int:
 
 def _render_one(img: Image.Image, panel: dict[str, Any],
                 text_cfg: dict[str, float],
-                record: dict[str, Any] | None = None) -> Image.Image:
-    img = _render_captions(img, panel.get("caption_boxes") or [], text_cfg, record)
-    img = _render_sfx(img, panel.get("sfx_lines") or [], text_cfg, record)
+                record: dict[str, Any] | None = None,
+                known: dict[str, Any] | None = None) -> Image.Image:
+    # Captions and SFX are placed first; their boxes are obstacles the
+    # dialogue layout keeps clear of, so record them even if the caller
+    # didn't ask for a record.
+    rec = record if record is not None else {}
+    img = _render_captions(img, panel.get("caption_boxes") or [], text_cfg, rec)
+    img = _render_sfx(img, panel.get("sfx_lines") or [], text_cfg, rec)
     img = _render_dialogue(
         img,
         panel.get("dialogue_lines") or [],
         panel.get("bubble_layout") or [],
         text_cfg,
-        record,
+        rec,
+        obstacles=rec.get("captions", []) + rec.get("sfx", []),
+        known=known,
     )
     return img
 
@@ -229,10 +269,11 @@ def _render_captions(img: Image.Image, captions: list[dict[str, Any]],
         return img
     draw = ImageDraw.Draw(img)
     W, H = img.size
-    font = _load_font(size=_font_px(text_cfg["caption_ratio"], W, text_cfg))
+    font = _load_font(size=_font_px(text_cfg["caption_ratio"], W, H, text_cfg))
+    line_h = _line_height(font)
     margin = 20
     padding = 10
-    max_text_width = max(20, int(W * 0.4) - 2 * padding)
+    max_text_width = max(20, _wrap_width(_CAPTION_MAX_WIDTH_FRAC, W, H, margin) - 2 * padding)
 
     for cap in captions:
         text = (cap.get("text") or "").strip()
@@ -243,9 +284,8 @@ def _render_captions(img: Image.Image, captions: list[dict[str, Any]],
         pos = cap.get("position") or "top-left"
 
         lines = _wrap_text(text, font, max_text_width, draw)
-        line_sizes = [_measure(draw, line, font) for line in lines]
-        text_w = max(w for w, _ in line_sizes)
-        text_h = sum(h for _, h in line_sizes)
+        text_w = max(_measure(draw, line, font)[0] for line in lines)
+        text_h = line_h * len(lines)
 
         box_w = text_w + 2 * padding
         box_h = text_h + 2 * padding
@@ -255,9 +295,9 @@ def _render_captions(img: Image.Image, captions: list[dict[str, Any]],
         _record(record, "captions", [x, y, x + box_w, y + box_h])
 
         y_cursor = y + padding
-        for line, (_, lh) in zip(lines, line_sizes):
+        for line in lines:
             draw.text((x + padding, y_cursor), line, fill=tc, font=font)
-            y_cursor += lh
+            y_cursor += line_h
     return img
 
 
@@ -268,7 +308,7 @@ def _render_sfx(img: Image.Image, sfx_lines: list[dict[str, Any]],
         return img
     draw = ImageDraw.Draw(img)
     W, H = img.size
-    font = _load_font(size=_font_px(text_cfg["sfx_ratio"], W, text_cfg))
+    font = _load_font(size=_font_px(text_cfg["sfx_ratio"], W, H, text_cfg))
     margin = 20
 
     for sfx in sfx_lines:
@@ -280,7 +320,10 @@ def _render_sfx(img: Image.Image, sfx_lines: list[dict[str, Any]],
 
         text_w, text_h = _measure(draw, text, font)
         x, y = _anchor_to_xy(pos, W, H, text_w, text_h, margin, allow_center=True)
-        _record(record, "sfx", [x, y, x + text_w, y + text_h])
+        # Ink sits below the draw origin by the font's top bearing; record
+        # where the glyphs actually land (plus the 2px outline).
+        ix0, iy0, ix1, iy1 = draw.textbbox((x, y), text, font=font)
+        _record(record, "sfx", [ix0 - 2, iy0 - 2, ix1 + 2, iy1 + 2])
 
         # Outline for legibility against any background.
         outline = "#ffffff" if _is_dark(color) else "#000000"
@@ -296,8 +339,18 @@ def _render_sfx(img: Image.Image, sfx_lines: list[dict[str, Any]],
 
 
 # ---------------------------------------------------------------------------
-# Dialogue: per-speaker region placement with face-aware tails
+# Dialogue: who is where, then a reading-order-correct layout
 # ---------------------------------------------------------------------------
+
+
+# Faces shorter than this fraction of the tallest face are treated as
+# background extras and never matched to a named character.
+_MIN_FACE_FRAC = 0.5
+# Distance matching: a face whose distance to another character's predicted
+# centre is within this fraction of the panel width of its own match's is
+# ambiguous, and that speaker gets no tail (fail closed).
+_AMBIGUOUS_FRAC = 0.05
+_BUBBLE_GAP = 14
 
 
 def _render_dialogue(
@@ -306,72 +359,88 @@ def _render_dialogue(
     bubble_layout: list[dict[str, Any]],
     text_cfg: dict[str, float],
     record: dict[str, Any] | None = None,
+    *,
+    obstacles: list[list[int]] | None = None,
+    known: dict[str, Any] | None = None,
 ) -> Image.Image:
-    """Place bubbles in their speaker's ``bubble_layout`` region.
+    """Lay out and draw the dialogue bubbles, in CBML reading order.
 
-    Each speaker gets a region (from ``bubble_layout`` or an auto-split)
-    and their lines stack within it.
+    1. **Who is where.** Each panel character is matched to a detected face
+       (:func:`_match_characters_to_faces`) so tails point at the right
+       speaker; a speaker with no confident match gets no tail and a bubble
+       near their predicted ``bubble_layout`` region instead. ``known``
+       (``detected_faces`` / ``actual_character_regions`` persisted from an
+       earlier render of the same panel image, or hand edits) overrides
+       detection and matching.
+    2. **Where bubbles go.** :func:`_layout_bubbles` places all bubbles at
+       once so they read in CBML order by construction, never overlap each
+       other or the captions/SFX in ``obstacles``, and otherwise sit near
+       their speaker over flat negative space, clear of faces.
 
-    NOTE: this preserves *per-speaker* stacking but does not yet enforce a
-    single global reading order across speakers — reading-order-correct,
-    negative-space-aware placement is tracked as separate work. What this
-    function does guarantee: bubble shapes are sized so their text is fully
-    contained (clouds and starbursts are drawn larger than their text box),
-    and tails are short stubs toward the speaker rather than panel-spanning
-    leader lines.
-
-    TODO (Phase 2): prefer ``actual_character_regions`` over the predicted
-    ``bubble_layout`` when the generator writes back where it actually
-    painted each character.
+    Bubble shapes are sized so their text is fully contained (clouds and
+    starbursts are drawn larger than their text box), and tails are short
+    stubs toward the speaker. Writes ``faces``, ``regions`` and one
+    ``bubbles`` entry per drawn line into ``record``.
     """
     if not dialogue:
         return img
 
     draw = ImageDraw.Draw(img)
     W, H = img.size
-    font = _load_font(size=_font_px(text_cfg["dialogue_ratio"], W, text_cfg))
+    font = _load_font(size=_font_px(text_cfg["dialogue_ratio"], W, H, text_cfg))
+    line_h = _line_height(font)
     margin = 20
     padding = 12
     max_tail = max(_TAIL_MIN_PX, int(min(W, H) * text_cfg["tail_frac"]))
+    max_bubble_width = _wrap_width(_BUBBLE_MAX_WIDTH_FRAC, W, H, margin)
+    known = known or {}
 
-    faces = _detect_all_faces(img)
-    if record is not None:
-        record["faces"] = [list(f) for f in faces]
+    if known.get("detected_faces") is not None:
+        faces = [tuple(f) for f in known["detected_faces"]]
+    else:
+        faces = _detect_all_faces(img)
 
-    # Speaker order = order of first mention in CBML.
-    speaker_order: list[str] = []
+    # Every panel character in CBML order (bubble_layout), plus any speaker
+    # it doesn't name. Silent characters count: they occupy faces too.
+    characters = [(r.get("character") or "").strip() for r in bubble_layout]
+    characters = [c for c in characters if c]
     for line in dialogue:
         speaker = (line.get("character") or "").strip()
-        if speaker and speaker not in speaker_order:
-            speaker_order.append(speaker)
+        if speaker and speaker not in characters:
+            characters.append(speaker)
 
-    # The enricher's bubble_layout is a *prediction* (equal horizontal
-    # slices in character order). We use it only as a prior for the
-    # left-to-right ordering of named characters; the real positions come
-    # from the faces detected on the actual generated panel.
-    region_by_speaker = _pixel_regions(bubble_layout, W, H)
-    _fill_missing_regions(region_by_speaker, speaker_order, W, H)
+    # The enricher's bubble_layout is a *prediction* (equal horizontal slices
+    # in character order): the left-to-right prior for matching, and the
+    # fallback anchor for a speaker we can't place.
+    region_by_char = _pixel_regions(bubble_layout, W, H)
+    _fill_missing_regions(region_by_char, characters, W, H)
 
-    # Anchor each speaker to where they actually are: their detected face
-    # when we can associate one, else the centre of their predicted slice.
-    anchors = _resolve_speaker_anchors(speaker_order, region_by_speaker, faces, W, H)
+    if known.get("actual_character_regions") is not None:
+        regions = {c: tuple(r) for c, r in known["actual_character_regions"].items()}
+    else:
+        regions = _match_characters_to_faces(characters, region_by_char, faces, W)
+    # A matched region is a face even if the detector missed it (a hand
+    # correction for a missed face): keep bubbles off it like any other.
+    faces = list(faces) + [r for r in regions.values() if r not in faces]
 
-    # Pre-compute a coarse "busy-ness" map so placement can prefer empty
-    # negative space (sky, walls) over detailed regions (faces, foreground).
-    busy = _busyness_map(img)
+    if record is not None:
+        record["faces"] = [list(f) for f in faces]
+        record["regions"] = {c: list(r) for c, r in regions.items()}
 
-    max_bubble_width = int(W * 0.42)
-    placed: list[tuple[int, int, int, int]] = []
-    prev_rect: tuple[int, int, int, int] | None = None
-    prev_speaker: str | None = None
-
+    # Size every bubble first: the layout needs them all at once.
+    bubbles: list[dict[str, Any]] = []
     for line_no, line in enumerate(dialogue):
         speaker = (line.get("character") or "").strip()
         text = (line.get("text") or "").strip()
-        if not text or speaker not in anchors:
+        if not text or not speaker:
             continue
         bubble_type = line.get("bubble_type") or "speech"
-        ax, ay, has_face = anchors[speaker]
+        if speaker in regions:
+            fx0, fy0, fx1, fy1 = regions[speaker]
+            anchor, has_face, face = ((fx0 + fx1) // 2, (fy0 + fy1) // 2), True, regions[speaker]
+        else:
+            rx, ry, rw, rh = region_by_char[speaker]
+            anchor, has_face, face = (rx + rw // 2, ry + rh // 2), False, None
 
         # Cloud (thought) and starburst (shout) need their text box smaller
         # than the drawn shape or the outline clips the glyphs. We wrap to
@@ -380,50 +449,44 @@ def _render_dialogue(
         wf, hf = _BUBBLE_INTERIOR.get(bubble_type, (1.0, 1.0))
         wrap_width = max(20, int((max_bubble_width - 2 * padding) * wf))
         wrapped = _wrap_text(text, font, wrap_width, draw)
-        line_sizes = [_measure(draw, l, font) for l in wrapped]
-        text_w = max(w for w, _ in line_sizes)
-        text_h = sum(h for _, h in line_sizes)
+        text_w = max(_measure(draw, l, font)[0] for l in wrapped)
+        text_h = line_h * len(wrapped)
+        bubbles.append({
+            "line": line_no, "speaker": speaker, "type": bubble_type,
+            "lines": wrapped, "text_h": text_h,
+            "w": min(int((text_w + 2 * padding) / wf), W - 2 * margin),
+            "h": min(int((text_h + 2 * padding) / hf), H - 2 * margin),
+            "anchor": anchor, "has_face": has_face, "face": face,
+            "tailed": bubble_type in ("speech", "thought"),
+        })
 
-        bubble_w = int((text_w + 2 * padding) / wf)
-        bubble_h = int((text_h + 2 * padding) / hf)
-        bubble_w = min(bubble_w, W - 2 * margin)
-        bubble_h = min(bubble_h, H - 2 * margin)
+    positions = _layout_bubbles(bubbles, faces, obstacles or [], _busyness_map(img),
+                                W, H, margin, clearance=max_tail)
 
-        # Consecutive lines from the same speaker stack vertically (the
-        # classic convention for one character's run of dialogue).
-        same_speaker = speaker == prev_speaker
-        bubble_x, bubble_y = _place_bubble(
-            bubble_w, bubble_h, (ax, ay), placed, faces, busy,
-            prev_rect, same_speaker, W, H, margin,
-        )
-        rect = (bubble_x, bubble_y, bubble_x + bubble_w, bubble_y + bubble_h)
+    for b, (x, y) in zip(bubbles, positions):
+        w, h = b["w"], b["h"]
+        rect = (x, y, x + w, y + h)
+        _draw_bubble(draw, x, y, w, h, b["type"])
 
-        _draw_bubble(draw, bubble_x, bubble_y, bubble_w, bubble_h, bubble_type)
-
-        # Only draw a tail when we actually located the speaker (a detected
+        # Only draw a tail when we actually located the speaker (a matched
         # face). With no face the anchor is a guess, so a tail would point
         # at an arbitrary spot — we omit it rather than mislead.
-        if has_face:
-            _draw_tail(draw, rect, (ax, ay), bubble_type, max_tail)
+        tail = b["has_face"] and _draw_tail(draw, rect, b["anchor"], b["type"], max_tail)
         _record(record, "bubbles", {
-            "line": line_no, "speaker": speaker, "type": bubble_type,
-            "rect": list(rect), "anchor": [ax, ay],
-            "tail": has_face and bubble_type in ("speech", "thought"),
+            "line": b["line"], "speaker": b["speaker"], "type": b["type"],
+            "rect": list(rect), "anchor": list(b["anchor"]), "tail": tail,
         })
 
         # Render the text last so it sits on top of bubble + tail fills.
         # Speech/whisper: left-aligned at the padding inset. Thought/shout:
         # centred inside the inflated shape, clear of the cloud / spikes.
-        centred = bubble_type in ("thought", "shout")
-        y_text = (bubble_y + (bubble_h - text_h) // 2) if centred else (bubble_y + padding)
-        for l, (lw, lh) in zip(wrapped, line_sizes):
-            x_text = (bubble_x + (bubble_w - lw) // 2) if centred else (bubble_x + padding)
+        centred = b["type"] in ("thought", "shout")
+        y_text = (y + (h - b["text_h"]) // 2) if centred else (y + padding)
+        for l in b["lines"]:
+            lw = _measure(draw, l, font)[0]
+            x_text = (x + (w - lw) // 2) if centred else (x + padding)
             draw.text((x_text, y_text), l, fill="#000000", font=font)
-            y_text += lh
-
-        placed.append(rect)
-        prev_rect = rect
-        prev_speaker = speaker
+            y_text += line_h
 
     return img
 
@@ -477,59 +540,71 @@ def _fill_missing_regions(
         region_by_speaker[s] = (i * slice_w, 0, rw, H)
 
 
-def _resolve_speaker_anchors(
-    speakers: list[str],
-    region_by_speaker: dict[str, tuple[int, int, int, int]],
+def _match_characters_to_faces(
+    characters: list[str],
+    region_by_char: dict[str, tuple[int, int, int, int]],
     faces: list[tuple[int, int, int, int]],
-    W: int, H: int,
-) -> dict[str, tuple[int, int, bool]]:
-    """Map each speaker to an anchor point ``(x, y, has_face)``.
+    W: int,
+) -> dict[str, tuple[int, int, int, int]]:
+    """Map panel characters to detected face boxes.
 
-    The anchor is where the speaker *is* — the point a tail should aim at
-    and the spot a bubble should sit near. We get it by associating
-    detected faces to speakers using the enricher's predicted left-to-right
-    character order as a prior: faces are sorted by x, speakers are sorted
-    by their predicted slice centre, and the two are matched positionally
-    (leftmost predicted speaker ↔ leftmost face, and so on). Speakers left
-    over when there are fewer faces than speakers fall back to the centre
-    of their predicted slice.
+    The prior is the enricher's predicted left-to-right order of *all* panel
+    characters (silent ones too — they occupy faces). Faces shorter than
+    ``_MIN_FACE_FRAC`` of the tallest are dropped as background extras.
+    Then:
 
-    This is deliberately position-aware rather than order-aware: it uses
-    where characters actually rendered, not the arbitrary CBML authoring
-    order, so a bubble lands next to the right character even when the
-    generator placed them on the opposite side from the script's ordering.
+    * as many faces as characters: match by rank (leftmost predicted
+      character ↔ leftmost face, and so on);
+    * otherwise: the assignment minimising the total horizontal distance from
+      each face to its character's predicted region centre, dropping any
+      match that's ambiguous (another character's centre nearly as close) so
+      that speaker gets no tail rather than a wrong one.
+
+    Characters left unmatched are absent from the result. Positional
+    matching can't tell when the generator mirrored the predicted order;
+    that needs identity (Docs/PLAN.md W3.2).
     """
-    def pred_centre(s: str) -> tuple[int, int]:
-        rx, ry, rw, rh = region_by_speaker.get(s, (0, 0, W, H))
-        return (rx + rw // 2, ry + rh // 2)
+    if not faces or not characters:
+        return {}
+    tallest = max(f[3] - f[1] for f in faces)
+    cands = [tuple(f) for f in faces if (f[3] - f[1]) >= _MIN_FACE_FRAC * tallest]
+    cands = sorted(cands, key=lambda f: f[1] - f[3])[:8]  # tallest first; bounds the search
 
-    anchors: dict[str, tuple[int, int, bool]] = {}
-    if faces:
-        faces_by_x = sorted(faces, key=lambda f: (f[0] + f[2]) / 2)
-        speakers_by_x = sorted(speakers, key=lambda s: pred_centre(s)[0])
-        for i, s in enumerate(speakers_by_x):
-            if i < len(faces_by_x):
-                fx0, fy0, fx1, fy1 = faces_by_x[i]
-                anchors[s] = ((fx0 + fx1) // 2, (fy0 + fy1) // 2, True)
-            else:
-                px, py = pred_centre(s)
-                anchors[s] = (px, py, False)
+    def face_x(f):
+        return (f[0] + f[2]) / 2
+
+    centre = {c: region_by_char[c][0] + region_by_char[c][2] / 2 for c in characters}
+
+    if len(cands) == len(characters):
+        by_x = sorted(characters, key=lambda c: centre[c])
+        return dict(zip(by_x, sorted(cands, key=face_x)))
+
+    if len(characters) <= len(cands):
+        options = ([*zip(characters, p)] for p in itertools.permutations(cands, len(characters)))
     else:
-        for s in speakers:
-            px, py = pred_centre(s)
-            anchors[s] = (px, py, False)
-    return anchors
+        options = ([*zip(p, cands)] for p in itertools.permutations(characters, len(cands)))
+    best = min(options, key=lambda pairs: sum(abs(face_x(f) - centre[c]) for c, f in pairs))
+
+    matched: dict[str, tuple[int, int, int, int]] = {}
+    for c, f in best:
+        d = abs(face_x(f) - centre[c])
+        if any(abs(face_x(f) - centre[o]) - d < _AMBIGUOUS_FRAC * W
+               for o in characters if o != c):
+            continue
+        matched[c] = f
+    return matched
 
 
 def _busyness_map(img: Image.Image, grid_w: int = 40):
     """A coarse map of visual detail, for steering bubbles to empty space.
 
-    Returns ``(small_grayscale_edges, grid_w, grid_h)``. Each cell holds
-    the average edge energy of the corresponding panel region (0 = flat
-    background, high = busy foreground/faces). Computed with an edge filter
-    then box-downsampled, so it costs one filter pass regardless of how
-    many bubbles get placed. On a flat test image it is uniformly zero, so
-    placement stays deterministic.
+    Returns ``(sat, grid_w, grid_h)``: a summed-area table over a
+    ``grid_w``-wide grid where each cell holds the average edge energy of the
+    corresponding panel region (0 = flat background, high = busy
+    foreground/faces). Computed with an edge filter then box-downsampled, so
+    it costs one filter pass however many placements are scored, and the
+    table makes each rect's mean O(1). On a flat test image it is uniformly
+    zero, so placement stays deterministic.
     """
     grid_h = max(1, int(grid_w * img.height / max(1, img.width)))
     try:
@@ -537,24 +612,27 @@ def _busyness_map(img: Image.Image, grid_w: int = 40):
         small = edges.resize((grid_w, grid_h), resample=Image.BOX)
     except Exception:
         small = Image.new("L", (grid_w, grid_h), 0)
-    return small, grid_w, grid_h
+    sat = [[0] * (grid_w + 1) for _ in range(grid_h + 1)]
+    for cy in range(grid_h):
+        row = 0
+        for cx in range(grid_w):
+            row += small.getpixel((cx, cy))
+            sat[cy + 1][cx + 1] = sat[cy][cx + 1] + row
+    return sat, grid_w, grid_h
 
 
 def _busy_in_rect(busy, W: int, H: int,
                   rect: tuple[int, int, int, int]) -> float:
     """Mean edge energy (0..1) of the busyness map under ``rect``."""
-    small, gw, gh = busy
+    sat, gw, gh = busy
     x0, y0, x1, y1 = rect
     cx0 = max(0, min(gw - 1, int(x0 / max(1, W) * gw)))
     cx1 = max(0, min(gw - 1, int(x1 / max(1, W) * gw)))
     cy0 = max(0, min(gh - 1, int(y0 / max(1, H) * gh)))
     cy1 = max(0, min(gh - 1, int(y1 / max(1, H) * gh)))
-    total = 0
-    n = 0
-    for cy in range(cy0, cy1 + 1):
-        for cx in range(cx0, cx1 + 1):
-            total += small.getpixel((cx, cy))
-            n += 1
+    total = (sat[cy1 + 1][cx1 + 1] - sat[cy0][cx1 + 1]
+             - sat[cy1 + 1][cx0] + sat[cy0][cx0])
+    n = (cx1 - cx0 + 1) * (cy1 - cy0 + 1)
     return (total / n) / 255.0 if n else 0.0
 
 
@@ -566,104 +644,188 @@ def _overlap_area(a: tuple[int, int, int, int],
     return ix * iy
 
 
-def _place_bubble(
-    bw: int, bh: int,
-    anchor: tuple[int, int],
-    placed: list[tuple[int, int, int, int]],
-    faces: list[tuple[int, int, int, int]],
-    busy,
-    prev_rect: tuple[int, int, int, int] | None,
-    same_speaker: bool,
-    W: int, H: int, margin: int,
-) -> tuple[int, int]:
-    """Choose a top-left for a ``bw×bh`` bubble near ``anchor``.
+def _beyond_reach(face: tuple[int, int, int, int], x: int, y: int,
+                  w: int, h: int, reach: float) -> float:
+    """How far past ``reach`` a bubble's tail root sits from ``face`` (px).
 
-    Searches a set of candidate slots (stacking up/down in three columns
-    around the anchor) and scores each by a weighted cost:
-
-    * hard penalty for overlapping an already-placed bubble (bubbles must
-      not collide),
-    * penalty for covering a detected face (keep faces visible),
-    * penalty for sitting over busy/detailed regions (prefer negative space),
-    * penalty proportional to tail length (keep the bubble near its speaker),
-    * a reading-order bias so a later bubble tends to sit below / to the
-      right of the previous one (Western top-to-bottom, left-to-right flow).
-
-    As a special case, consecutive lines from the *same* speaker stack
-    directly beneath the previous bubble when there's room — the usual
-    convention for one character's run of dialogue.
-
-    Returns the clamped, in-bounds top-left. The cost trades these off
-    rather than hard-forbidding any one, so placement degrades gracefully
-    on cramped panels instead of failing.
+    The tail roots at the centre of the bubble edge facing the speaker and is
+    capped at tail length, so a bubble further away than that leaves a stub
+    pointing at nothing. 0 when within reach, or when the face is level with
+    the bubble (no vertical tail; that case is penalised separately).
     """
-    ax, ay = anchor
+    fx0, fy0, fx1, fy1 = face
+    cx = x + w / 2
+    if fy0 >= y + h:        # face below: tail from the bottom edge
+        dy = fy0 - (y + h)
+    elif fy1 <= y:          # face above: tail from the top edge
+        dy = y - fy1
+    else:
+        return 0.0
+    dx = max(fx0 - cx, 0.0, cx - fx1)
+    return max(0.0, math.hypot(dx, dy) - reach)
 
-    # Same-speaker run: stack straight down under the previous bubble when
-    # that slot is free of other bubbles and faces.
-    if same_speaker and prev_rect is not None:
-        sp_cx = (prev_rect[0] + prev_rect[2]) // 2
-        x0 = max(margin, min(W - margin - bw, sp_cx - bw // 2))
-        y0 = prev_rect[3] + 14
-        rect = (x0, y0, x0 + bw, y0 + bh)
-        if (y0 + bh <= H - margin
-                and all(_overlap_area(rect, p) == 0 for p in placed)
-                and all(_overlap_area(rect, f) == 0 for f in faces)):
-            return x0, y0
 
-    head_gap = max(18, bh // 3)
+def _layout_bubbles(
+    bubbles: list[dict[str, Any]],
+    faces: list[tuple[int, int, int, int]],
+    obstacles: list[list[int]],
+    busy,
+    W: int, H: int, margin: int,
+    *,
+    clearance: int = 0,
+) -> list[tuple[int, int]]:
+    """Place every bubble at once so the panel reads in CBML order.
 
-    # Candidate bubble-centre columns: above the head, and offset left/right.
-    columns = [ax, ax - (bw // 2 + 24), ax + (bw // 2 + 24)]
-    # Stack slots upward from just above the head, plus a few below as
-    # fallback when there's no room above.
-    centres: list[tuple[int, int]] = []
-    top_base = ay - head_gap - bh // 2
-    for col in columns:
-        for k in range(0, 6):
-            centres.append((col, top_base - k * (bh + 14)))
-        for k in range(0, 3):
-            centres.append((col, ay + head_gap + bh // 2 + k * (bh + 14)))
+    (a) **Bands.** Lines go into vertical bands, top to bottom in CBML
+        order. A line may share the previous line's band, to its right, when
+        a different speaker standing further right says it — the Z-path of
+        an alternating exchange. A speaker's consecutive lines always stack.
+        Every allowed sharing pattern is tried and the cheapest wins.
+    (b) **Positions.** Each band is as tall as its tallest bubble and sits
+        strictly below the previous one. Band offsets are chosen jointly
+        (a DP over candidate heights) and each bubble's horizontal position
+        within its band greedily, all by one cost: covering faces (each
+        grown by ``clearance``, the tail length, so no tail stabs into a
+        face), covering
+        captions/SFX, sitting over busy detail, distance from the bubble's
+        bottom-centre to its speaker, a tailed bubble sitting level with
+        its speaker's face (no tail direction), and a tailed bubble sitting
+        beyond tail reach of that face (the stub can't attribute the line).
 
-    def clamp(cx: int, cy: int) -> tuple[int, int]:
-        x = max(margin, min(W - margin - bw, cx - bw // 2))
-        y = max(margin, min(H - margin - bh, cy - bh // 2))
-        return x, y
+    Reading order and bubble/bubble non-overlap hold by construction.
+    Returns top-left ``(x, y)`` per bubble, in input order.
+    """
+    if not bubbles:
+        return []
+    gap = _BUBBLE_GAP
+    usable_w = W - 2 * margin
+    step = max(8, (H - 2 * margin) // 40)
+    keep_out = [(f[0] - clearance, f[1] - clearance, f[2] + clearance, f[3] + clearance)
+                for f in faces]
 
-    best: tuple[int, int] | None = None
-    best_cost = float("inf")
-    area = max(1, bw * bh)
+    def rect_cost(b: dict[str, Any], x: int, y: int) -> float:
+        w, h = b["w"], b["h"]
+        rect = (x, y, x + w, y + h)
+        ax, ay = b["anchor"]
+        cost = sum(_overlap_area(rect, f) for f in keep_out) * 1.5
+        cost += sum(_overlap_area(rect, tuple(o)) for o in obstacles) * 6.0
+        cost += _busy_in_rect(busy, W, H, rect) * w * h * 1.2
+        cost += math.hypot(x + w / 2 - ax, y + h - ay)
+        if b["tailed"] and b["has_face"] and y <= ay <= y + h:
+            cost += W
+        if b["tailed"] and b["face"]:
+            cost += _beyond_reach(b["face"], x, y, w, h, clearance + gap) * w * 0.5
+        return cost
 
-    for cx, cy in centres:
-        x0, y0 = clamp(cx, cy)
-        rect = (x0, y0, x0 + bw, y0 + bh)
+    band_cache: dict[tuple[tuple[int, ...], int], tuple[float, list[int]]] = {}
 
-        cost = 0.0
-        # Bubble–bubble overlap: near-absolute avoidance.
-        for p in placed:
-            cost += _overlap_area(rect, p) * 6.0
-        # Face coverage: keep characters' faces readable.
-        for f in faces:
-            cost += _overlap_area(rect, f) * 1.5
-        # Negative-space preference (flat regions are cheap to cover).
-        cost += _busy_in_rect(busy, W, H, rect) * area * 1.2
-        # Keep the bubble near the speaker → short tail. Distance from the
-        # bubble's bottom-centre (where the tail roots) to the anchor.
-        root = (x0 + bw // 2, y0 + bh)
-        cost += math.hypot(root[0] - ax, root[1] - ay) * 1.0
-        # Reading-order bias relative to the previous bubble.
-        if prev_rect is not None:
-            if y0 < prev_rect[1] - 12:               # clearly higher → backwards
-                cost += (prev_rect[1] - y0) * 2.5
-            elif abs(y0 - prev_rect[1]) <= bh and x0 < prev_rect[0] - 12:
-                cost += (prev_rect[0] - x0) * 1.2     # same band but to the left
+    def band_cost(band: tuple[int, ...], y: int) -> tuple[float, list[int]]:
+        """Cheapest left-to-right placement of ``band``'s bubbles at height ``y``."""
+        key = (band, y)
+        if key not in band_cache:
+            total, xs, lo = 0.0, [], margin
+            for k, i in enumerate(band):
+                b = bubbles[i]
+                rest = sum(bubbles[j]["w"] + gap for j in band[k + 1:])
+                hi = max(lo, W - margin - b["w"] - rest)
+                # Near the speaker: centred on them, or offset by up to half
+                # a bubble + 24px either side (the old placer's three
+                # columns, sampled finer). Clamped to the band's free span.
+                centred = b["anchor"][0] - b["w"] // 2
+                reach = b["w"] // 2 + 24
+                cands = {min(hi, max(lo, centred + reach * n // 4)) for n in range(-4, 5)}
+                x = min(cands, key=lambda c: rect_cost(b, c, y))
+                total += rect_cost(b, x, y)
+                xs.append(x)
+                lo = x + b["w"] + gap
+            band_cache[key] = (total, xs)
+        return band_cache[key]
 
-        if cost < best_cost:
-            best_cost = cost
-            best = (x0, y0)
+    def heights(band: tuple[int, ...]) -> int:
+        return max(bubbles[i]["h"] for i in band)
 
-    # centres is never empty, so best is always set; fall back defensively.
-    return best if best is not None else clamp(ax, ay - head_gap - bh // 2)
+    def y_candidates(band: tuple[int, ...], lo: int, hi: int) -> list[int]:
+        """Heights near the band's speakers: up to six bubble-slots above the
+        head, three below (the old placer's reach). Only if reading order
+        rules all of those out does the band search the whole ``[lo, hi]``.
+        """
+        hb = heights(band)
+        grid = set(range(lo, hi + 1, step)) | {hi}
+        near, snug = set(), set()
+        for i in band:
+            if bubbles[i]["face"]:
+                _, top, _, bottom = bubbles[i]["face"]
+                above, below = top - clearance - gap - hb, bottom + clearance + gap
+            else:
+                above = below = bubbles[i]["anchor"][1] - hb
+            snug.update((above, below))  # just clear of the head, for a tight fit
+            near.update(y for y in grid
+                        if above - 5 * (hb + gap) <= y <= below + 2 * (hb + gap))
+        ys = {y for y in near | snug if lo <= y <= hi}
+        return sorted(ys or grid)
+
+    def solve(bands: list[tuple[int, ...]]) -> tuple[float, list[tuple[int, list[int]]]] | None:
+        """DP over band heights; ``None`` if the bands can't fit the panel."""
+        hs = [heights(b) for b in bands]
+        if sum(hs) + gap * (len(bands) - 1) > H - 2 * margin:
+            return None
+        # Latest top each band may take and still leave room for those below.
+        latest = [H - margin - sum(hs[k:]) - gap * (len(bands) - 1 - k)
+                  for k in range(len(bands))]
+        prev: list[tuple[int, float, list]] = []   # (y, cost, placements so far)
+        for k, band in enumerate(bands):
+            earliest = margin if k == 0 else min(y for y, _, _ in prev) + hs[k - 1] + gap
+            cur = []
+            for y in y_candidates(band, earliest, latest[k]):
+                cost, xs = band_cost(band, y)
+                if k == 0:
+                    cur.append((y, cost, [(y, xs)]))
+                    continue
+                ok = [p for p in prev if p[0] + hs[k - 1] + gap <= y]
+                if ok:
+                    best = min(ok, key=lambda p: p[1])
+                    cur.append((y, best[1] + cost, best[2] + [(y, xs)]))
+            if not cur:
+                return None
+            prev = cur
+        best = min(prev, key=lambda p: p[1])
+        return best[1], best[2]
+
+    def structures(i: int, acc: list[list[int]]):
+        """Every band structure: each line opens a band or (Z-path) joins the last."""
+        if i == len(bubbles):
+            yield [tuple(b) for b in acc]
+            return
+        b = bubbles[i]
+        if acc:
+            last = bubbles[acc[-1][-1]]
+            width = sum(bubbles[j]["w"] + gap for j in acc[-1]) + b["w"]
+            if (b["speaker"] != last["speaker"]
+                    and b["anchor"][0] > last["anchor"][0] and width <= usable_w):
+                yield from structures(i + 1, acc[:-1] + [acc[-1] + [i]])
+        yield from structures(i + 1, acc + [[i]])
+
+    best: tuple[float, list[tuple[int, ...]], list] | None = None
+    for bands in structures(0, []):
+        solved = solve(bands)
+        if solved and (best is None or solved[0] < best[0]):
+            best = (solved[0], bands, solved[1])
+
+    positions: dict[int, tuple[int, int]] = {}
+    if best is not None:
+        _, bands, placed = best
+        for band, (y, xs) in zip(bands, placed):
+            for i, x in zip(band, xs):
+                positions[i] = (x, y)
+    else:
+        # Too much text to stack in the panel: keep the order, stack from the
+        # top as far as it goes, and let the bottom bands overlap.
+        y = margin
+        for i, b in enumerate(bubbles):
+            _, xs = band_cost((i,), min(y, H - margin - b["h"]))
+            positions[i] = (xs[0], min(y, H - margin - b["h"]))
+            y += b["h"] + gap
+    return [positions[i] for i in range(len(bubbles))]
 
 
 # ---------------------------------------------------------------------------
@@ -811,7 +973,7 @@ def _draw_tail(draw: ImageDraw.ImageDraw,
                bubble_rect: tuple[int, int, int, int],
                target: tuple[int, int],
                bubble_type: str,
-               max_tail_px: int) -> None:
+               max_tail_px: int) -> bool:
     """Draw a tail/leader from ``bubble_rect`` toward ``target``.
 
     speech  -> triangular tail
@@ -821,10 +983,14 @@ def _draw_tail(draw: ImageDraw.ImageDraw,
     ``max_tail_px`` caps the tail length. Comic tails are short stubs that
     merely indicate the speaker's direction; they should not stretch across
     the panel to physically touch the face. The tail therefore points
-    *toward* the target but stops at ``max_tail_px``.
+    *toward* the target but stops at ``max_tail_px``. A tail shorter than
+    ``_TAIL_STUB_PX`` is lengthened to it, so it reads as a stub rather than
+    a vanishing sliver.
+
+    Returns whether a tail was drawn.
     """
     if bubble_type in ("shout", "whisper"):
-        return
+        return False
 
     bx0, by0, bx1, by1 = bubble_rect
     bcx = (bx0 + bx1) // 2
@@ -836,14 +1002,18 @@ def _draw_tail(draw: ImageDraw.ImageDraw,
         origin_y = by0
     else:
         # Target horizontally alongside the bubble — no clean tail direction.
-        return
+        return False
 
     # Cap the tail to a short stub pointing toward the target.
     dx = tx - bcx
     dy = ty - origin_y
     distance = math.hypot(dx, dy)
-    if distance > max_tail_px and distance > 0:
+    if distance > max_tail_px:
         scale = max_tail_px / distance
+        tx = int(bcx + dx * scale)
+        ty = int(origin_y + dy * scale)
+    elif distance < _TAIL_STUB_PX:
+        scale = _TAIL_STUB_PX / distance  # distance > 0: target is off the edge
         tx = int(bcx + dx * scale)
         ty = int(origin_y + dy * scale)
 
@@ -859,7 +1029,7 @@ def _draw_tail(draw: ImageDraw.ImageDraw,
                 [px - radius, py - radius, px + radius, py + radius],
                 fill="#ffffff", outline="#000000", width=border,
             )
-        return
+        return True
 
     # speech: filled triangle that overwrites the bubble outline at its base.
     tail_base = 14
@@ -869,6 +1039,7 @@ def _draw_tail(draw: ImageDraw.ImageDraw,
     draw.polygon([p1, p2, p3], fill="#ffffff")
     draw.line([p1, p3], fill="#000000", width=border)
     draw.line([p2, p3], fill="#000000", width=border)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -893,6 +1064,21 @@ def _load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 def _measure(draw: ImageDraw.ImageDraw, text: str, font) -> tuple[int, int]:
     bbox = draw.textbbox((0, 0), text, font=font)
     return bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+
+def _line_height(font) -> int:
+    """Distance between successive lines: the font's ascent + descent.
+
+    Not a line's own ink height — a line with no ascenders or descenders
+    ("are more") is short, and advancing by it made the next line ride up
+    into it.
+    """
+    try:
+        ascent, descent = font.getmetrics()
+        return ascent + descent
+    except AttributeError:  # bitmap fallback font
+        bbox = font.getbbox("Ay")
+        return bbox[3] - bbox[1]
 
 
 def _wrap_text(text: str, font, max_width: int,

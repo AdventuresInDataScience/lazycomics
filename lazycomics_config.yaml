@@ -203,15 +203,17 @@ upscaler:
 # ---------------------------------------------------------------------------
 # Controls font sizes and speech-bubble tail length for the captions, SFX,
 # and dialogue bubbles overlaid onto generated panels. Font sizes are a
-# fraction of each panel's WIDTH (so they stay legible across small grid
-# cells and large splash panels alike), then multiplied by font_scale and
-# floored at min_font_px. To make ALL text bigger or smaller in one move,
-# change font_scale; for finer control, tune the per-type ratios.
+# fraction of each panel's size S = sqrt(width * height) -- not width alone,
+# so tall narrow panels don't get the smallest text in the book -- then
+# multiplied by font_scale and floored at min_font_px. (These equal the old
+# width ratios x sqrt(4/3), so a 4:3 panel keeps the size it had.) To make
+# ALL text bigger or smaller in one move, change font_scale; for finer
+# control, tune the per-type ratios.
 text:
-  # Per-type font size as a fraction of panel width.
-  dialogue_font_ratio: 0.030   # speech/thought/shout/whisper text
-  caption_font_ratio: 0.028    # narrator caption boxes
-  sfx_font_ratio: 0.050        # sound effects (kept large/punchy)
+  # Per-type font size as a fraction of sqrt(panel width * height).
+  dialogue_font_ratio: 0.035   # speech/thought/shout/whisper text
+  caption_font_ratio: 0.032    # narrator caption boxes
+  sfx_font_ratio: 0.058        # sound effects (kept large/punchy)
 
   # Floor so text never becomes illegible on a tiny panel.
   min_font_px: 16

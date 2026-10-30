@@ -14,8 +14,9 @@ turned out to be wrong.
 |---|---|
 | W0 Housekeeping | **Done** 2026-10-30: `test_e2e_output/` and `golden_output/` gitignored and untracked; stray script and logs removed; README and example updated. |
 | W1 Generation contract | **Landed; pending a full e2e run.** Verified on 17 panels (problems 1, 2). Two small items remain (see W1). |
-| W2 Verification loop | **Done 2026-10-30, pending your review.** Every spec item is built (see W2 for spec → as-built). One command (`tools/golden_run.py --force`) regenerated the 12-panel golden subset from scratch in 582s. That **misses the <8 min target**. The no-GPU loop takes 10s. Delete the W2 section once accepted. |
-| W3–W6 | Not started. |
+| W2 Verification loop | **Done and accepted** 2026-10-30. `tools/golden_run.py` regenerates the 12-panel golden subset in one command (582s from scratch, misses the <8 min target); the no-GPU loop takes 10s. See W2. |
+| W3 Bubble layout | **Built 2026-10-30; one open decision.** Reading order, line spacing, narrow-panel text, persistence and polish are done and verified on real art. Speaker attribution is fixed except where the generator mirrored the predicted character order: 2 golden panels. Fixing those needs identity matching, which W3.2 left as a decision (see W3). Done-when not met until that's decided. |
+| W4–W6 | Not started. |
 
 ---
 
@@ -50,8 +51,8 @@ the W1 re-run and the golden runs:
 |---|---|---|---|---|
 | 1 | **Panel dimensions** — **FIXED, verified 2026-10-30.** 17/17 re-run panels came out at exactly the requested size (448×1024 where June gave 784×576, 224×1024 where it gave 592×448, 1024×512 where it gave 848×624), all within 1.6% of slot aspect. | RESOLVED | Every panel comes out ~4:3 landscape whatever was requested. A 0.44 portrait slot gets 784×576; a 2:1 slot gets 848×624; a 0.22 slot gets 592×448. The pixel *area* matches the request; the *aspect* doesn't. | **Confirmed in Wan2GP source.** The `"K"` in `video_prompt_type: KI` makes wgp take the output aspect from `image_refs[0]`, which is the style ref (1342×996). `resolution` only sets the pixel budget (`fit_canvas: 0`). The formula reproduces 784×576, 1184×880 and 848×624 exactly. No check compares *output* dims to the request, so this went unnoticed. |
 | 2 | **Text cut off / bubbles in odd places** (final pages) — **FIXED with #1, verified 2026-10-30.** Re-run pages have no edge-clipped text. `page_010` panel 3 has its characters back. `page_005`'s 2:1 panels regained bubbles that cropping had removed entirely ("Later that night.", "Constantly."). | RESOLVED | On the un-cropped `panels_text/` images, bubbles are mostly well placed and fully legible. On assembled pages, text is sliced at the panel edges. | Downstream of #1: the assembler's `cover` fit crops a 1.35 panel into a 0.44 slot (keeping ~33% of the width) or a 0.22 slot (~17%). `page_010` panel 3 loses its characters entirely. |
-| 3 | **Bubble reading order** — still open; now caught automatically. `check_panel` flags `page_2_panel_2` from the W1 re-run (line 2 above line 1). **The golden baseline has no live failure:** `page_3_panel_1` (golden `page_1_panel_1`) reads correctly in its post-W1 generation. See W3.1. | RESOLVED | `page_3_panel_1`: CBML order Yuki→Gerald→Yuki→Gerald is rendered fully reversed (last line top-left, first line bottom-centre). | `_place_bubble` is greedy. The first line takes the cheapest slot, which is just above its speaker's head and therefore *low*. Each later line can only go up. The "earlier is higher" bias can't recover. |
-| 4 | **Bubble tail points at wrong speaker** — still open; in the golden baseline. Golden `page_4_panel_1`: David's line points at Ranjeet and Gerald's at David; the model drew David left, the prediction had him right. Golden `page_1_panel_1`: all four bubbles sit by Gerald, including Yuki's. Not machine-checkable (no identity); visible on `sheet_pages.png`. | RESOLVED | `page_8_panel_4`: David's line has its tail on Gerald. | `_resolve_speaker_anchors` sorts *speakers only* left to right and matches them to *all* detected faces sorted by x. Silent characters, background extras, or one false-positive face shift every match by one. |
+| 3 | **Bubble reading order** — **FIXED (W3.1), verified 2026-10-30.** Order now holds by construction. Story `page_2_panel_2`, reversed in the W1 re-run, reads correctly after re-lettering, and the checks find no order or overlap issues across all 17 W1-run panels or the 12 golden panels. | RESOLVED | `page_3_panel_1`: CBML order Yuki→Gerald→Yuki→Gerald is rendered fully reversed (last line top-left, first line bottom-centre). | `_place_bubble` is greedy. The first line takes the cheapest slot, which is just above its speaker's head and therefore *low*. Each later line can only go up. The "earlier is higher" bias can't recover. |
+| 4 | **Bubble tail points at wrong speaker** — **mostly fixed (W3.2, cheap version); mirrored panels remain.** Fixed: golden `page_1_panel_1` (background faces had taken both speakers' places) and `page_2_panel_2` (both tails wrong because a silent character was ignored). Remaining, needing identity: golden `page_4_panel_1`, where David's tail points at Ranjeet (Gerald's wrong tail is gone, fail-closed). Also golden `page_2_panel_1`, a **regression**: David's "EAT IT!" shout (no tail) moved from neutral top-centre to beside Gerald, because counting all characters assigns the mirrored faces. Not machine-checkable; visible on `sheet_pages.png`. | RESOLVED | `page_8_panel_4`: David's line has its tail on Gerald. | `_resolve_speaker_anchors` sorts *speakers only* left to right and matches them to *all* detected faces sorted by x. Silent characters, background extras, or one false-positive face shift every match by one. |
 | 5 | **Character drift** — **much improved on solo panels after W1 (first look, not yet measured).** `page_006`'s three Gerald-solo panels now show one consistent young man with messy brown hair. The `page_002` desk panel shows the same Gerald where June had a white-haired stranger. **But not every panel:** in the golden baseline Gerald is still a white-haired old man in the golden `page_1_panel_4` close-up (his ref passed first; the prompt calls him "a pale white hedge fund analyst", see W4.2). He has white spiky hair in golden `page_2_panel_2`. Formal re-baseline is W4.1. | OPEN | Worst on **solo** panels. Gerald's ref is young with brown hair; solo panels 3-4 and 6-1..3 show a white-haired old man and a clownish face. **Multi-character** panels are often excellent: in `page_8_panel_4` all four characters match their refs. | **Confirmed in Wan2GP source: `image_start` is silently discarded for Klein.** It's kept only if `"S"` is in `image_prompt_type`, which Klein doesn't allow. The primary character's ref goes *only* to `image_start` and is excluded from `image_refs` (`ref_preparer._collect_supporting`). So the most important character on every panel has had **no visual reference**; only the other characters (in `image_refs`) were conditioned. |
 | 6 | **Inpaint quirks** ("two disjointed halves") | "Addressed, visual confirmation pending" | Not exercised since May. `enricher.multi_char_strategy: auto` routes every LoRA-free multi-char panel to a single pass, so all 33 panels in the June run were `single`. | **Confirmed in Wan2GP source: our inpaint settings never applied.** Tasks don't send `settings_version`, so `flux_handler.fix_settings` forces `denoising_strength = 1.0`, overriding our 0.25. `masking_strength` 0.3 locks the area outside the mask for only ~2 of 4 steps, and flux2 never pastes the original pixels back. Net effect: the whole panel gets regenerated, so the May "two disjointed halves" came from Wan2GP's settings, not our masks. Dormant until a character has a LoRA. |
 | 7 | Gibberish signage ("PICAK", "FIOOUFEK") | — | Neon signs in the bar scenes carry nonsense text. | Location descriptions invite signage, and the negative prompt is inert (#8). |
@@ -59,9 +60,10 @@ the W1 re-run and the golden runs:
 | 9 | Panel files are JPEGs named `.png` | — | `panels/*.png` start with `ff d8` (JPEG). | wgp writes `.jpg`; `_collect_outputs` copies the bytes to `<id>.png`. Harmless downstream (later stages save real PNGs) but misleading. |
 | 10 | Output→panel pairing is fragile | — | Worked in the June run. | `_collect_outputs` pairs by sorted filename (`<timestamp>_seed42_<prompt>.jpg`). Two tasks finishing in the same second sort by prompt text. A failed task shifts every later panel by one. |
 | 11 | **Generation slower since W1; how much is unclear** | — | W1 re-run: 1597s for 17 panels (avg 83s) vs ~555s for the same panels in June. Small portrait panels ~1.7× slower (e.g. 23s → 39s); large 4–6-ref panels 3–4× (`page_2_panel_1` 71s → 213s). **But the golden runs did similar large panels much faster:** `page_8_panel_4` (6 refs, 1024×768) 92s and `page_3_panel_1` (4 refs, 912×1024) 63–68s, against ~200s for comparable panels in the 27-minute W1 run. Golden baseline: 19–92s per panel, 582s for 12. | One extra ref per panel (the primary, previously discarded) explains a moderate slowdown: each ref costs about an output image's worth of tokens. The large-panel cliff did **not** reproduce in a short run, so it isn't size/ref count alone. Candidates: laptop thermal throttling over long runs, or another GPU process (LM Studio was resident). Needs a controlled measurement before acting. Levers if real: W4.2 (fewer refs), W4.5 (lower `base_resolution` + upscale). |
-| 12 | **Text tiny and over-wrapped in narrow panels** | — | Visible now that panels aren't cropped. `page_010` (224px-wide panels) gets 1–3 words per line at the 16px floor; one thought cloud's text overruns its outline. | `text.*_font_ratio` and `max_bubble_width` (42% of W) scale with panel **width**, so tall narrow panels get the smallest text. See W3.5. |
-| 13 | **Text lines collide inside a bubble** | — | Golden `page_4_panel_1`: "So there / are more / of you?" draws "are more" and "of you?" on top of each other. | Lines advance by each line's own glyph-ink height (`_measure`), not the font's line height. A line without descenders is "short", so the next one rides up into it. Worst at small sizes. See W3.6. |
+| 12 | **Text tiny and over-wrapped in narrow panels** — **FIXED (W3.5), verified 2026-10-30.** Golden `page_4_panel_3`'s line went from 7 lines to 3. 0.22-slot panels still use the 16px floor, but on-page that's ~47px against ~60px for the wide panels. | — | Visible now that panels aren't cropped. `page_010` (224px-wide panels) gets 1–3 words per line at the 16px floor; one thought cloud's text overruns its outline. | `text.*_font_ratio` and `max_bubble_width` (42% of W) scale with panel **width**, so tall narrow panels get the smallest text. See W3.5. |
+| 13 | **Text lines collide inside a bubble** — **FIXED (W3.6), verified 2026-10-30** on golden `page_4_panel_1` and the `page_1_panel_2` thought cloud. | — | Golden `page_4_panel_1`: "So there / are more / of you?" draws "are more" and "of you?" on top of each other. | Lines advance by each line's own glyph-ink height (`_measure`), not the font's line height. A line without descenders is "short", so the next one rides up into it. Worst at small sizes. See W3.6. |
 | 14 | **Face detector misses stylised faces, accepts junk** | — | First golden run, `page_6_panel_1` (not in the current subset): Gerald's grinning face is missed; the only hit is a 0.53-score box on the floor. | The hybrid YuNet + MediaPipe threshold is 0.5. Everything face-driven inherits this (tail anchors, problem 4). The character sheet only head-crops on ≥ 0.6. |
+| 15 | Thought-bubble trailing dots are tiny and bunched | — | Golden `page_1_panel_2`: the three dots sit within ~20px of the cloud, reading as one blob. | They share the speech-tail length cap (`tail_frac` × short edge), so they span only ~22px on a 448-wide panel. Not in W3's scope; noted for later polish. |
 
 ---
 
@@ -217,6 +219,79 @@ the golden panels in seconds, no GPU.
 **Done when:** `golden_run.py` reports no reading-order or overlap issues,
 `sheet_pages.png` shows every tail on the right character, and no
 narrow-panel text is over-wrapped or colliding.
+
+**As built (2026-10-30).** All in `src/lazycomics/text_renderer.py`.
+Implemented in dependency order: 6 and 5 (sizes) → 2 (who is where) → 1
+(placement) → 3 → 4. Verified by re-lettering the golden baseline's panels
+(`golden_w3/`, compared against `golden_output/`) and the 17 W1-run panels;
+no regeneration was needed.
+
+1. **Reading order** → `_layout_bubbles`, the spec's two phases:
+   - (a) Every allowed band structure is enumerated: an alternating
+     speaker standing further right *may* share the previous band (the
+     Z-path), and a speaker's consecutive lines always stack.
+   - (b) Band heights are chosen jointly (a DP over candidate heights near
+     the speakers) and x positions greedily, using the existing cost terms.
+
+   Order and non-overlap hold by construction. **Two cost terms were
+   added**, each fixing something the panels showed:
+   - Faces are kept clear by one tail length, so tails don't stab into
+     faces. Without this, two existing tests failed.
+   - A tailed bubble placed beyond tail reach of its speaker is penalised.
+     Busyness otherwise pulled bubbles 250px away onto flat floor.
+
+   Captions and SFX are obstacles. Results: no order or overlap issues on
+   any golden or W1-run panel; story `page_2_panel_2` is fixed. The e2e
+   check via `contact_sheet.py` is still to come with W1's pending run.
+2. **Attribution** → `_match_characters_to_faces`, as specced:
+   - all characters, not just speakers;
+   - faces under 50% of the tallest dropped;
+   - rank match when counts are equal, else minimum total distance;
+   - fail closed when ambiguous (within 5% of panel width).
+
+   Fixed golden `page_1_panel_1` and `page_2_panel_2`. **Not fixed, as
+   predicted:** mirrored compositions, golden `page_4_panel_1` and
+   `page_2_panel_1` (problem 4). **Decision pending:** see below.
+3. **Persist** → `render_text` writes `detected_faces`,
+   `actual_character_regions` (character → face box) and
+   `detected_faces_for` (sha1 of the panel image) into the enriched JSON.
+   - Re-renders of the same image reuse them.
+   - A regenerated image is detected afresh.
+   - Hand edits are honoured, including a hand-added face the detector
+     missed (problem 14).
+   - `enrich()` clears them.
+4. **Polish:**
+   - ≥3-bubble numbering: **not needed.** The 4-line golden
+     `page_1_panel_1` now reads unambiguously.
+   - Minimum tail stub: 12px (`_TAIL_STUB_PX`).
+   - Thought-cloud sizing: the June overflow was the line-spacing bug;
+     after 6 the text sits inside the cloud with room to spare, so no
+     sizing change was needed. The trailing dots are a separate, smaller
+     issue (problem 15).
+5. **Area-based sizing** → font and wrap width scale with √(W·H). The
+   ratios are the old width ratios × √(4/3), so 4:3 panels keep the size
+   tuned in Phase 3. Config values and comments are updated. Captions get
+   the same wrap-width rule.
+6. **Line spacing** → `_line_height` (font ascent + descent) for bubbles
+   and captions. SFX now record their true ink box.
+
+Tests: 16 new in `test_text_renderer.py`. 13 of the first 14 fail against
+the old renderer. The obstacle test was rewritten until it fails without
+the obstacle term. 388 pass in total.
+
+**Open decision: identity matching (W3.2: "decide after trying the cheap
+version").** Positional matching can't recognise a mirrored composition, so
+2 of 12 golden panels still attribute a line to the wrong character. W3's
+done-when ("every tail on the right character") can't be met without one
+of:
+- (a) **Identity via OpenCV SFace** (`cv2.FaceRecognizerSF`, already in
+  OpenCV 4.11). It needs one ~37 MB ONNX model file, like YuNet. Compare
+  each face crop to the characters' reference faces. It is light, but
+  trained on photos, so how well it handles comic faces is unknown.
+- (b) **Identity via CLIP image embeddings.** Likely more robust on
+  stylised art, but adds torch + open_clip (~2 GB).
+- (c) **Defer identity** and amend done-when to "every tail on the right
+  character, except mirrored compositions", tracked as problem 4.
 
 ### W4 — Character + style consistency
 

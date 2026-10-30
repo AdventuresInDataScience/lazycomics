@@ -13,7 +13,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
@@ -867,3 +867,265 @@ def test_all_overlays_together(env):
     assert out_path.is_file()
     out = Image.open(out_path)
     assert out.size == (800, 600)
+
+
+# ---------------------------------------------------------------------------
+# W3: line spacing, area-based sizing, attribution, reading order, persistence
+# ---------------------------------------------------------------------------
+
+
+def _layout(env, panel_id="p1"):
+    return json.loads(
+        (env.project.panels_text_dir / f"{panel_id}.layout.json").read_text(encoding="utf-8")
+    )
+
+
+def _dark_row_bands(img, rect, dark=100):
+    """Contiguous row bands inside ``rect`` that contain dark (text) pixels.
+
+    Scans clear of the outline and of the rounded corners (radius <= 20),
+    where the dark panel background shows through.
+    """
+    x0, y0, x1, y1 = rect
+    rows = [any(max(img.getpixel((x, y))) < dark for x in range(x0 + 22, x1 - 22))
+            for y in range(y0 + 3, y1 - 3)]
+    bands, inside = 0, False
+    for has_ink in rows:
+        if has_ink and not inside:
+            bands += 1
+        inside = has_ink
+    return bands
+
+
+@_with_env
+def test_wrapped_lines_do_not_collide(env):
+    # Golden page_4_panel_1: "are more" (no ascenders/descenders) followed by
+    # "of you?" drew on top of each other when lines advanced by their own
+    # ink height. Advancing by the font's line height keeps two clear rows.
+    orig = text_renderer._wrap_text
+    text_renderer._wrap_text = lambda text, font, width, draw: ["are more", "of you?"]
+    try:
+        env.make_panel("p1", 800, 600, colour=(40, 40, 40))
+        env.write_enriched("p1", dialogue_lines=[
+            {"character": "NOVA", "text": "are more of you?", "bubble_type": "speech"},
+        ])
+        render_text(env.project)
+    finally:
+        text_renderer._wrap_text = orig
+    out = Image.open(env.project.panels_text_dir / "p1.png").convert("RGB")
+    rect = _layout(env)["bubbles"][0]["rect"]
+    assert _dark_row_bands(out, rect) == 2
+
+
+def test_font_size_from_panel_area_keeps_4x3_size():
+    cfg = {"min_font": 16, "font_scale": 1.0}
+    # A 4:3 panel keeps the size the old width-based ratio gave it (+-1px)...
+    assert abs(text_renderer._font_px(0.035, 1024, 768, cfg) - int(1024 * 0.030)) <= 1
+    # ...while a tall narrow strip is no longer sized by its width alone.
+    assert text_renderer._font_px(0.035, 448, 1024, cfg) > int(448 * 0.030)
+
+
+def test_narrow_panel_bubbles_use_most_of_the_width():
+    frac = text_renderer._BUBBLE_MAX_WIDTH_FRAC
+    # 224px strip: wrap to the panel minus margins, not 42% of its width.
+    assert text_renderer._wrap_width(frac, 224, 1024, 20) == 184
+    # Wide panels are unaffected by the cap.
+    assert text_renderer._wrap_width(frac, 1024, 768, 20) == int((1024 * 768) ** 0.5 * frac)
+
+
+def _regions(chars, W, H=1000):
+    """Equal left-to-right slices, as the enricher predicts them."""
+    n = len(chars)
+    return {c: (i * W // n, 0, W // n, H) for i, c in enumerate(chars)}
+
+
+def _face(cx, h, W=1000, y=300):
+    x = int(cx * W)
+    return (x - h // 2, y, x + h // 2, y + h)
+
+
+def test_match_ignores_background_faces_by_size_and_distance():
+    # Golden page_1_panel_1: six faces for two characters. Rank-matching the
+    # speakers gave Gerald a background face and Yuki Gerald's face.
+    faces = [_face(0.07, 40), _face(0.26, 74), _face(0.30, 60),
+             _face(0.50, 29), _face(0.67, 72), _face(0.92, 58)]
+    got = text_renderer._match_characters_to_faces(
+        ["GERALD", "YUKI"], _regions(["GERALD", "YUKI"], 1000), faces, 1000)
+    assert got == {"GERALD": _face(0.26, 74), "YUKI": _face(0.67, 72)}
+
+
+def test_match_counts_silent_characters():
+    # Golden page_2_panel_2: Ranjeet and Yuki speak, Gerald (left) is silent.
+    # Matching only the speakers handed them the two leftmost faces.
+    chars = ["GERALD", "YUKI", "RANJEET"]
+    faces = [_face(0.08, 49), _face(0.24, 137), _face(0.60, 103), _face(0.80, 121)]
+    got = text_renderer._match_characters_to_faces(chars, _regions(chars, 1000), faces, 1000)
+    assert got == {"GERALD": _face(0.24, 137), "YUKI": _face(0.60, 103),
+                   "RANJEET": _face(0.80, 121)}
+
+
+def test_match_fails_closed_when_ambiguous():
+    # One face exactly between two characters' predicted centres: neither
+    # gets it (no tail beats a wrong tail).
+    chars = ["A", "B"]
+    got = text_renderer._match_characters_to_faces(chars, _regions(chars, 1000),
+                                                    [_face(0.50, 80)], 1000)
+    assert got == {}
+
+
+def test_match_fewer_faces_leaves_unseen_speaker_unmatched():
+    # Golden page_4_panel_1: four characters, two faces. Gerald isn't in the
+    # panel; he must not inherit someone else's face.
+    chars = ["GERALD", "YUKI", "RANJEET", "DAVID"]
+    got = text_renderer._match_characters_to_faces(
+        chars, _regions(chars, 1000), [_face(0.31, 62), _face(0.82, 54)], 1000)
+    assert "GERALD" not in got and len(got) == 2
+
+
+@_with_env
+def test_alternating_exchange_reads_in_cbml_order(env):
+    # The June page_3_panel_1 failure: two speakers at mid-height trading
+    # four lines came out fully reversed (each later line placed higher).
+    from lazycomics import review
+    env.make_panel("p1", 912, 1024, colour=(40, 40, 40))
+    env.set_faces([(200, 420, 280, 500), (600, 410, 680, 490)])
+    env.write_enriched("p1",
+        dialogue_lines=[
+            {"character": "YUKI", "text": "How are you so calm?", "bubble_type": "speech"},
+            {"character": "GERALD", "text": "I have seen worse crashes.", "bubble_type": "speech"},
+            {"character": "YUKI", "text": "Like 2008?", "bubble_type": "speech"},
+            {"character": "GERALD", "text": "Much earlier.", "bubble_type": "speech"},
+        ],
+        bubble_layout=[
+            {"character": "GERALD", "x_frac": 0.0, "y_frac": 0,
+             "width_frac": 0.5, "height_frac": 1},
+            {"character": "YUKI", "x_frac": 0.5, "y_frac": 0,
+             "width_frac": 0.5, "height_frac": 1},
+        ],
+    )
+    render_text(env.project)
+    layout = _layout(env)
+    assert review._reading_order_issues(layout["bubbles"]) == []
+    assert review._overlap_issues(layout) == []
+    # Each line's tail goes to its own speaker's face.
+    for b in layout["bubbles"]:
+        assert b["tail"]
+        if b["speaker"] == "GERALD":
+            assert b["anchor"][0] < 456
+        else:
+            assert b["anchor"][0] > 456
+
+
+def test_layout_moves_bubbles_off_captions_and_sfx():
+    # Lay a bubble out, put an obstacle (a caption) exactly where it landed,
+    # lay it out again: it must move clear.
+    face = (360, 300, 440, 380)
+    bubble = {"w": 170, "h": 50, "speaker": "NOVA", "anchor": (400, 340),
+              "has_face": True, "face": face, "tailed": True}
+    busy = text_renderer._busyness_map(Image.new("RGB", (800, 600), (40, 40, 40)))
+    (x, y), = text_renderer._layout_bubbles([bubble], [face], [], busy, 800, 600, 20,
+                                            clearance=30)
+    caption = [x - 10, y - 10, x + 180, y + 60]
+    (x2, y2), = text_renderer._layout_bubbles([bubble], [face], [caption], busy, 800, 600, 20,
+                                              clearance=30)
+    assert _rect_overlap((x2, y2, x2 + 170, y2 + 50), caption) == 0
+
+
+@_with_env
+def test_rendered_bubble_clears_caption(env):
+    env.make_panel("p1", 800, 600, colour=(40, 40, 40))
+    env.set_faces([(360, 300, 440, 380)])
+    env.write_enriched("p1",
+        caption_boxes=[{"text": "Meanwhile, at the office.", "position": "top-center"}],
+        dialogue_lines=[{"character": "NOVA", "text": "Hello there", "bubble_type": "speech"}],
+    )
+    render_text(env.project)
+    layout = _layout(env)
+    assert _rect_overlap(layout["bubbles"][0]["rect"], layout["captions"][0]) == 0
+
+
+@_with_env
+def test_decisions_persisted_to_enriched_json(env):
+    import hashlib
+    env.make_panel("p1", 800, 600, colour=(40, 40, 40))
+    env.set_faces([(300, 300, 380, 380)])
+    env.write_enriched("p1", dialogue_lines=[
+        {"character": "NOVA", "text": "Hello", "bubble_type": "speech"}])
+    render_text(env.project)
+    data = json.loads((env.project.enriched_dir / "p1.json").read_text(encoding="utf-8"))
+    assert data["detected_faces"] == [[300, 300, 380, 380]]
+    assert data["actual_character_regions"] == {"NOVA": [300, 300, 380, 380]}
+    panel_bytes = (env.project.panels_dir / "p1.png").read_bytes()
+    assert data["detected_faces_for"] == hashlib.sha1(panel_bytes).hexdigest()
+
+
+@_with_env
+def test_rerender_reuses_persisted_faces_for_same_image(env):
+    calls = []
+    env.make_panel("p1", 800, 600, colour=(40, 40, 40))
+    env.write_enriched("p1", dialogue_lines=[
+        {"character": "NOVA", "text": "Hello", "bubble_type": "speech"}])
+    text_renderer._detect_all_faces = lambda img: calls.append(1) or [(300, 300, 380, 380)]
+    render_text(env.project)
+    render_text(env.project, force=True)
+    assert len(calls) == 1
+    # A regenerated panel image has a different hash: detect afresh.
+    env.make_panel("p1", 800, 600, colour=(60, 60, 60))
+    render_text(env.project, force=True)
+    assert len(calls) == 2
+
+
+@_with_env
+def test_hand_edited_character_region_is_honoured(env):
+    env.make_panel("p1", 800, 600, colour=(40, 40, 40))
+    env.set_faces([(100, 300, 180, 380), (600, 300, 680, 380)])
+    env.write_enriched("p1",
+        dialogue_lines=[{"character": "NOVA", "text": "Hello", "bubble_type": "speech"}],
+        bubble_layout=[{"character": "NOVA", "x_frac": 0.0, "y_frac": 0,
+                        "width_frac": 1.0, "height_frac": 1}])
+    render_text(env.project)
+    # A user corrects the match by hand: NOVA is the right-hand face.
+    path = env.project.enriched_dir / "p1.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["actual_character_regions"] = {"NOVA": [600, 300, 680, 380]}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    render_text(env.project, force=True)
+    assert _layout(env)["bubbles"][0]["anchor"] == [640, 340]
+
+
+@_with_env
+def test_hand_added_face_counts_as_a_face(env):
+    # Problem 14: the detector missed the speaker's face; the user adds it
+    # as their region. It must be avoided like a face, and the tail aimed at
+    # it must count as aimed at a face.
+    from lazycomics import review
+    env.make_panel("p1", 800, 600, colour=(40, 40, 40))
+    env.set_faces([])
+    env.write_enriched("p1", dialogue_lines=[
+        {"character": "NOVA", "text": "Hello", "bubble_type": "speech"}])
+    render_text(env.project)
+    path = env.project.enriched_dir / "p1.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["actual_character_regions"] = {"NOVA": [360, 300, 440, 380]}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    render_text(env.project, force=True)
+    layout = _layout(env)
+    assert [360, 300, 440, 380] in layout["faces"]
+    assert layout["bubbles"][0]["tail"]
+    assert review._tail_issues(layout) == []
+    assert _rect_overlap(layout["bubbles"][0]["rect"], (360, 300, 440, 380)) == 0
+
+
+def test_tail_is_lengthened_to_a_visible_stub():
+    img = Image.new("RGB", (400, 400), (40, 40, 40))
+    draw = ImageDraw.Draw(img)
+    rect = (100, 100, 300, 160)
+    # Speaker only 3px below the bubble: the tail still reaches 12px.
+    assert text_renderer._draw_tail(draw, rect, (200, 163), "speech", 40)
+    r, g, b = img.getpixel((200, 160 + text_renderer._TAIL_STUB_PX - 4))
+    assert r > 200 and g > 200 and b > 200
+
+
+def test_tail_reports_not_drawn_when_speaker_is_level_with_bubble():
+    draw = ImageDraw.Draw(Image.new("RGB", (400, 400)))
+    assert text_renderer._draw_tail(draw, (100, 100, 300, 160), (350, 130), "speech", 40) is False
