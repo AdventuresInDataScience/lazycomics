@@ -263,6 +263,26 @@ def test_config_system_prompt_used_when_no_arg(env):
 
 
 @_with_env
+def test_null_config_system_prompt_falls_back_to_default(env):
+    # `system_prompt: null` in config means "use the built-in default". The
+    # shipped lazycomics_config.yaml ships exactly this. Regression guard:
+    # cfg_get returns the literal None for an explicit null, which must be
+    # coalesced to DEFAULT_SYSTEM_PROMPT — otherwise the system message goes
+    # out with null content and the endpoint rejects it (HTTP 400).
+    env.write_config(
+        "llm:\n"
+        "  url: http://fake-llm/v1\n"
+        "  model: fake-model\n"
+        "  system_prompt: null\n"
+    )
+    env.write_prompt("p1", "x")
+    refine_prompts_with_llm(env.project)
+    sent_system = env.calls[0]["body"]["messages"][0]["content"]
+    assert sent_system == DEFAULT_SYSTEM_PROMPT
+    assert sent_system is not None
+
+
+@_with_env
 def test_function_arg_overrides_config_system_prompt(env):
     env.write_config(
         "llm:\n"

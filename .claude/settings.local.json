@@ -3,7 +3,12 @@
     "allow": [
       "Bash(where.exe uv *)",
       "Bash(uv --version)",
-      "Bash(where.exe python *)"
+      "Bash(where.exe python *)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_integration_e2e.py::test_full_pipeline_e2e -v)",
+      "Bash(grep -n \"yaml\\\\|home\\\\|expanduser\\\\|cwd\\\\|Path\\\\|search\\\\|/\\\\.\" src/lazycomics/config.py)",
+      "Read(//c/Users/malha/**)",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_llm_refiner.py -q)"
     ]
   }
 }

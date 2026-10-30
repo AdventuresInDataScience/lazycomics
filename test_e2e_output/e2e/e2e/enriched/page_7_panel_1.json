@@ -1,0 +1,65 @@
+{
+  "panel_id": "page_7_panel_1",
+  "page_index": 6,
+  "panel_index": 0,
+  "aspect_ratio": 2.0,
+  "pixel_rect": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "bleed_edges": [
+    "left",
+    "right",
+    "top"
+  ],
+  "loc_identifier": "THE_OFFICE",
+  "loc_description": "modern city hedge fund office, interior, main open-plan area filled with cubicles, glowing monitors showing market data, glass-walled manager's office at the back, London skyline visible through floor-to-ceiling windows",
+  "loc_reference_images": [
+    "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\locations\\THE_OFFICE\\references\\THE_OFFICE.png"
+  ],
+  "characters": [
+    {
+      "identifier": "DAVID",
+      "visual_description": "older white man, grey beard, tanned skin, sharp business suit, slick and well-groomed, reading glasses, watchful narrow eyes",
+      "reference_images": [
+        "C:\\Users\\malha\\Documents\\Projects\\lazycomics\\test_e2e_output\\e2e\\e2e\\assets\\characters\\DAVID\\references\\DAVID.png"
+      ],
+      "lora": null
+    }
+  ],
+  "primary_character": "DAVID",
+  "char_generation_strategy": "single",
+  "inpaint_order": [
+    "DAVID"
+  ],
+  "occlusion_order": [],
+  "shot_hint": "wide shot of David alone late at night in the office surrounded by conspiracy evidence",
+  "mood": "paranoid thriller",
+  "action": "David has created an investigation board connecting Gerald to historical stock crashes, bat sightings, and suspiciously pale employee photos.",
+  "dialogue_lines": [],
+  "caption_boxes": [],
+  "sfx_lines": [
+    {
+      "text": "SCRIBBLE SCRIBBLE",
+      "color": "#444444",
+      "position": "top-right"
+    }
+  ],
+  "bubble_layout": [
+    {
+      "character": "DAVID",
+      "x_frac": 0.0,
+      "y_frac": 0.0,
+      "width_frac": 1.0,
+      "height_frac": 1.0
+    }
+  ],
+  "composition_flags": {},
+  "panel_context": {},
+  "pose_ref": null,
+  "lora_stack": [],
+  "prompt": null,
+  "negative_prompt": null
+}

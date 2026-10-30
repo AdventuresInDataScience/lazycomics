@@ -48,11 +48,29 @@ def _tool_available(name: str) -> bool:
     return shutil.which(name) is not None
 
 
-def _ollama_reachable() -> bool:
+def _llm_model_available(config) -> bool:
+    """True only if the configured LLM endpoint is up *and* the configured
+    model is actually pulled.
+
+    Checking ``/api/tags`` alone isn't enough — a reachable Ollama with the
+    model missing returns HTTP 400 on every chat call, which would turn the
+    refiner's graceful degrade into a hard test failure. We tie the check to
+    the same ``llm.url``/``llm.model`` the refiner uses so the test skips
+    cleanly when the configured model isn't installed.
+    """
+    llm = config.get("llm", {})
+    url, model = llm.get("url"), llm.get("model")
+    if not url or not model:
+        return False
     try:
         import requests
-        r = requests.get("http://localhost:11434/api/tags", timeout=3)
-        return r.status_code == 200
+        # `llm.url` is the OpenAI-compat base (…/v1); Ollama's tags live on the host root.
+        base = url.rsplit("/v1", 1)[0].rstrip("/")
+        r = requests.get(f"{base}/api/tags", timeout=3)
+        if r.status_code != 200:
+            return False
+        names = {m.get("name") for m in r.json().get("models", [])}
+        return model in names
     except Exception:
         return False
 
@@ -149,7 +167,7 @@ def test_full_pipeline_e2e():
     assert len(refs_result) >= 0, "references should be prepared"
 
     # === LLM refinement (optional) ==========================================
-    if _ollama_reachable() and config.get("llm", {}).get("url"):
+    if _llm_model_available(config):
         first_panel_id = panels[0].panel_id
         orig = (project.prompts_dir / f"{first_panel_id}.txt").read_text()
         refined = lc.refine_prompts_with_llm(project)
@@ -159,7 +177,8 @@ def test_full_pipeline_e2e():
         assert len(list(project.prompts_dir.glob("*.bak"))) > 0, \
             "refinement should leave .bak backups"
     else:
-        print("\n  [skip] LLM refinement — Ollama not reachable at localhost:11434")
+        print("\n  [skip] LLM refinement — configured llm.model not available "
+              f"at {config.get('llm', {}).get('url')!r}")
 
     # === Generate panels (REAL Wan2GP — slow) ===============================
     gen = lc.generate_panels(project, force=True, config=config)

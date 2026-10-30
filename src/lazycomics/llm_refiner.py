@@ -107,7 +107,11 @@ def refine_prompts_with_llm(
         )
 
     if system_prompt is None:
-        system_prompt = cfg_get(cfg, "llm.system_prompt", DEFAULT_SYSTEM_PROMPT)
+        # `llm.system_prompt: null` in config means "use the built-in default",
+        # so coalesce an explicit null (which cfg_get returns verbatim) to it —
+        # otherwise the system message goes out with null content and the
+        # OpenAI-compat endpoint rejects the request ("invalid message content").
+        system_prompt = cfg_get(cfg, "llm.system_prompt", None) or DEFAULT_SYSTEM_PROMPT
 
     if panels is None:
         panel_ids = sorted(
