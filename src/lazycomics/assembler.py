@@ -21,10 +21,15 @@ Three-tier knob resolution (arg → ``assembly.<key>`` config → default):
 
 Panels are read from ``panels_text/<panel_id>.png``. A missing panel
 yields a loud gray placeholder so the gap is obvious in review.
+
+``<project>/panel_slots.json`` records, per placed panel, which physical pages
+it landed on and the window of the panel (in panel pixels) that survives
+the fit — so ``lazycomics.review`` can tell whether a bubble got cropped off.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -121,6 +126,14 @@ def _assemble_from_comic(
     aspect_w, aspect_h = comic.aspect
     page_w = int(round(aspect_w * page_height_px / aspect_h))
 
+    # Merge into the existing record so pages skipped below keep theirs.
+    # Kept out of pages/: the upscaler hands that whole directory to
+    # Real-ESRGAN, so it stays images-only.
+    slots_path = project.base_dir / "panel_slots.json"
+    slots: dict[str, Any] = (
+        json.loads(slots_path.read_text(encoding="utf-8")) if slots_path.is_file() else {}
+    )
+
     results: dict[int, Path] = {}
     for page in comic.pages:
         span = page.span
@@ -135,10 +148,15 @@ def _assemble_from_comic(
                     results[pn] = p
             continue
 
+        page_slots: dict[str, Any] = {}
         canvas = _render_page_canvas(
             page, page_w, page_height_px, gutter_px, bg_color,
-            stretch_tolerance, fit_mode, project,
+            stretch_tolerance, fit_mode, project, record=page_slots,
         )
+        page_nums = list(range(first_page_num, first_page_num + span))
+        for entry in page_slots.values():
+            entry["pages"] = page_nums
+        slots.update(page_slots)
 
         # Split spread canvas into physical pages and write each.
         for i, physical in enumerate(_split_canvas(canvas, span, page_w)):
@@ -147,6 +165,7 @@ def _assemble_from_comic(
             physical.save(out_path)
             results[pn] = out_path
 
+    slots_path.write_text(json.dumps(slots, indent=2), encoding="utf-8")
     return results
 
 
@@ -159,8 +178,13 @@ def _render_page_canvas(
     stretch_tolerance: float,
     fit_mode: str,
     project: Project,
+    record: dict[str, Any] | None = None,
 ) -> Image.Image:
-    """Render one page (or spread) onto a single (span*page_w × page_h) canvas."""
+    """Render one page (or spread) onto a single (span*page_w × page_h) canvas.
+
+    When ``record`` is given, each real (non-placeholder) panel's visible
+    window is stored under its panel ID as ``{"visible": [x0, y0, x1, y1]}``.
+    """
     span = page.span
     canvas_w = page_w * span
     canvas_h = page_h
@@ -189,6 +213,10 @@ def _render_page_canvas(
         fitted = _fit_to_slot(panel_img, slot_w, slot_h, stretch_tolerance,
                               fit_mode, bg_color)
         canvas.paste(fitted, (slot_x, slot_y))
+        if record is not None and (project.panels_text_dir / f"{panel_id}.png").is_file():
+            record[panel_id] = {"visible": list(_visible_window(
+                *panel_img.size, slot_w, slot_h, stretch_tolerance, fit_mode,
+            ))}
 
     return canvas
 
@@ -294,6 +322,42 @@ def _fit_to_slot(
     canvas = Image.new("RGB", (slot_w, slot_h), bg_color)
     canvas.paste(resized, ((slot_w - new_w) // 2, (slot_h - new_h) // 2))
     return canvas
+
+
+def _visible_window(
+    img_w: int,
+    img_h: int,
+    slot_w: int,
+    slot_h: int,
+    stretch_tolerance: float,
+    fit_mode: str = _DEFAULT_FIT_MODE,
+) -> tuple[int, int, int, int]:
+    """The part of an ``img_w × img_h`` panel that :func:`_fit_to_slot` keeps.
+
+    In panel pixels, ``(x0, y0, x1, y1)``. Mirrors ``_fit_to_slot``'s
+    branches: only ``cover`` with drift beyond the tolerance crops anything;
+    stretch and contain show the whole panel (distorted or letterboxed).
+    Kept beside it so the two can't drift; ``test_assembler`` pins them
+    together.
+    """
+    whole = (0, 0, img_w, img_h)
+    if (img_w, img_h) == (slot_w, slot_h):
+        return whole
+    slot_aspect = slot_w / slot_h
+    drift = abs(img_w / img_h - slot_aspect) / slot_aspect
+    if drift <= stretch_tolerance or fit_mode != "cover":
+        return whole
+
+    scale = max(slot_w / img_w, slot_h / img_h)
+    new_w = max(slot_w, int(round(img_w * scale)))
+    new_h = max(slot_h, int(round(img_h * scale)))
+    left = (new_w - slot_w) // 2
+    top = (new_h - slot_h) // 2
+    sx, sy = new_w / img_w, new_h / img_h
+    return (
+        int(round(left / sx)), int(round(top / sy)),
+        int(round((left + slot_w) / sx)), int(round((top + slot_h) / sy)),
+    )
 
 
 # ---------------------------------------------------------------------------

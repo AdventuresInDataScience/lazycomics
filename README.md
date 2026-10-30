@@ -15,15 +15,12 @@ layer.
 
 ## Status
 
-**Phase 1 — pure-Python pipeline:** complete. The end-to-end flow runs
-on placeholder PNGs and produces a valid `.cbz`.
+The full pipeline runs end-to-end: CBML → Wan2GP-generated panels (Flux 2
+Klein) → lettered pages → `.cbz`. Output quality is the current focus
+(character consistency, bubble layout). LoRA training is not built yet.
 
-**Phase 2 — generation bridges:** not yet started. Drop in your own
-PNGs to `<project>/panels/` for now.
-
-See [`docs/STATUS.md`](docs/STATUS.md) for the module map, deviations
-from the original plan, and the design principles the codebase adheres
-to.
+See [`Docs/PLAN.md`](Docs/PLAN.md) for what works, what doesn't, and
+what's next.
 
 ## Installation
 
@@ -71,9 +68,10 @@ cc.build_prompts(project)
 # 6. Source images → aspect-cropped reference stacks
 cc.prepare_references(project)
 
-# --- AT THIS POINT: generate panel PNGs via Wan2GP (Phase 2 bridge,
-#     not yet implemented). For now, drop your own PNGs into
-#     <project>/panels/<panel_id>.png. ---
+# 7a. Prompts + refs → panel PNGs via Wan2GP (needs the `wan2gp:` paths
+#     in lazycomics_config.yaml). Or drop your own PNGs into
+#     <project>/panels/<panel_id>.png.
+cc.generate_panels(project)
 
 # 7. Panel PNGs + dialogue/SFX → panels with text overlays
 cc.render_text(project)

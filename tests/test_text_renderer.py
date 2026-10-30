@@ -211,6 +211,52 @@ def test_skip_when_output_exists(env):
 
 
 @_with_env
+def test_layout_sidecar_records_placements(env):
+    # The renderer writes what it placed next to the PNG so review tooling
+    # can check reading order / overlaps without re-deriving the layout.
+    env.make_panel("p1", 800, 600)
+    env.set_faces([(100, 300, 180, 380)])
+    env.write_enriched(
+        "p1",
+        caption_boxes=[{"text": "Later.", "position": "top-left"}],
+        dialogue_lines=[
+            {"character": "NOVA", "text": "First line", "bubble_type": "speech"},
+            {"character": "NOVA", "text": "", "bubble_type": "speech"},  # skipped
+            {"character": "NOVA", "text": "Second line", "bubble_type": "shout"},
+        ],
+        bubble_layout=[{"character": "NOVA", "x_frac": 0.0, "y_frac": 0.0,
+                        "width_frac": 1.0, "height_frac": 1.0}],
+    )
+    render_text(env.project)
+
+    layout = json.loads(
+        (env.project.panels_text_dir / "p1.layout.json").read_text(encoding="utf-8")
+    )
+    assert layout["size"] == [800, 600]
+    assert layout["faces"] == [[100, 300, 180, 380]]
+    assert len(layout["captions"]) == 1
+    bubbles = layout["bubbles"]
+    # Line indices are positions in dialogue_lines (CBML order); the empty
+    # line is skipped, not renumbered.
+    assert [b["line"] for b in bubbles] == [0, 2]
+    assert bubbles[0]["tail"] is True       # speech + face found
+    assert bubbles[1]["tail"] is False      # shouts never get a tail
+    assert bubbles[0]["anchor"] == [140, 340]
+    for b in bubbles:
+        x0, y0, x1, y1 = b["rect"]
+        assert 0 <= x0 < x1 <= 800 and 0 <= y0 < y1 <= 600
+
+
+@_with_env
+def test_layout_sidecar_written_for_textless_panel(env):
+    env.make_panel("p1")
+    env.write_enriched("p1")
+    render_text(env.project)
+    layout = json.loads((env.project.panels_text_dir / "p1.layout.json").read_text())
+    assert layout == {"size": [800, 600]}
+
+
+@_with_env
 def test_force_overwrites_existing(env):
     env.make_panel("p1")
     env.write_enriched("p1")

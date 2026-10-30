@@ -12,9 +12,10 @@ This script exists for two reasons:
    meant to be called and what it produces. Read top-to-bottom for the
    canonical usage shape.
 
-The "generated panels" step (Phase 2, not yet implemented) is faked by
-writing solid-colour PNGs to ``<project>/panels/``. Replace that block
-with a real Wan2GP call when Phase 2 lands.
+The "generated panels" step is faked by writing solid-colour PNGs to
+``<project>/panels/`` so the demo runs without a GPU. In a real run,
+replace that block with ``cc.generate_panels(project)`` (needs Wan2GP
+configured in ``lazycomics_config.yaml``).
 
 Requires:
     pip install lazycomics
@@ -172,11 +173,12 @@ print(f"Refs prepared: {len(refs)} panel(s) → {project.refs_prepared_dir}/")
 
 
 # ---------------------------------------------------------------------------
-# 7. *** Generate panels (Phase 2 bridge — not yet implemented) ***
+# 7. *** Generate panels (faked here — no GPU needed) ***
 #
-# In a real run, Wan2GP would read each prompt + ref stack and write
-# generated PNGs to <project>/panels/. We fake that here with solid
-# colours so the rest of the pipeline has something to chew on.
+# In a real run, cc.generate_panels(project) has Wan2GP read each prompt
+# + ref stack and write generated PNGs to <project>/panels/. We fake that
+# here with solid colours so the rest of the pipeline has something to
+# chew on.
 # ---------------------------------------------------------------------------
 
 PLACEHOLDER_COLOURS = [

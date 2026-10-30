@@ -218,3 +218,5 @@ __marimo__/
 .streamlit/secrets.toml
 test_live_output/
 test_live_output_queue/
+test_e2e_output/
+golden_output/

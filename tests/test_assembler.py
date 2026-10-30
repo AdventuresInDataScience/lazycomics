@@ -505,6 +505,94 @@ def test_exact_match_returns_image_unchanged_either_way(env):
 
 
 # ---------------------------------------------------------------------------
+# Visible window + panel_slots.json (what review uses to spot cropped text)
+# ---------------------------------------------------------------------------
+
+
+def _gradient(w, h, horizontal=True):
+    """Red channel = position along the axis (0..255), so a column's colour
+    says where in the source it came from."""
+    img = Image.new("RGB", (w, h))
+    n = w if horizontal else h
+    for i in range(n):
+        v = int(round(i * 255 / (n - 1)))
+        for j in range(h if horizontal else w):
+            img.putpixel((i, j) if horizontal else (j, i), (v, 0, 0))
+    return img
+
+
+def test_visible_window_matches_what_fit_to_slot_keeps():
+    # Pin _visible_window to _fit_to_slot's real cover crop: the fitted
+    # image's edge colours must equal the gradient at the window's edges.
+    for (iw, ih), (sw, sh), horizontal in [
+        ((1000, 500), (300, 600), True),     # too wide -> crop left/right
+        ((400, 1000), (600, 300), False),    # too tall -> crop top/bottom
+        ((784, 576), (448, 1024), True),     # the pre-W1 symptom
+    ]:
+        img = _gradient(iw, ih, horizontal)
+        fitted = assembler._fit_to_slot(img, sw, sh, 0.0, "cover")
+        x0, y0, x1, y1 = assembler._visible_window(iw, ih, sw, sh, 0.0, "cover")
+        n = iw if horizontal else ih
+        lo, hi = (x0, x1) if horizontal else (y0, y1)
+        first = fitted.getpixel((0, sh // 2) if horizontal else (sw // 2, 0))[0]
+        last = fitted.getpixel((sw - 1, sh // 2) if horizontal else (sw // 2, sh - 1))[0]
+        assert abs(first - lo * 255 / (n - 1)) <= 3, (iw, ih, sw, sh, first, lo)
+        assert abs(last - (hi - 1) * 255 / (n - 1)) <= 3, (iw, ih, sw, sh, last, hi)
+        # And the other axis is untouched.
+        assert ((y0, y1) if horizontal else (x0, x1)) == ((0, ih) if horizontal else (0, iw))
+
+
+def test_visible_window_whole_panel_when_nothing_cropped():
+    assert assembler._visible_window(600, 900, 600, 900, 0.0, "cover") == (0, 0, 600, 900)
+    assert assembler._visible_window(1000, 500, 300, 600, 0.0, "contain") == (0, 0, 1000, 500)
+    assert assembler._visible_window(1000, 500, 300, 600, 0.0, "stretch") == (0, 0, 1000, 500)
+    assert assembler._visible_window(1000, 500, 300, 600, 5.0, "cover") == (0, 0, 1000, 500)
+
+
+@_with_env
+def test_panel_slots_record_written(env):
+    import json
+    # 2:1 panel into a 2:3 single-panel page -> cover crops the sides.
+    env.make_panel("page_1_panel_1", 1200, 600, (10, 10, 10))
+    comic = _comic([
+        _page(0, [_panel("A", _slot(1, 1, 1, 1))]),
+        _page(1, [_panel("A", _slot(1, 1, 1, 1))], span=2),   # missing panel
+    ], aspect=(2, 3))
+    _assemble_from_comic(env.project, comic, page_height_px=900)
+
+    slots = json.loads((env.project.base_dir / "panel_slots.json").read_text())
+    # Placeholder (missing) panels aren't recorded.
+    assert set(slots) == {"page_1_panel_1"}
+    rec = slots["page_1_panel_1"]
+    assert rec["pages"] == [1]
+    x0, y0, x1, y1 = rec["visible"]
+    assert (y0, y1) == (0, 600) and 0 < x0 < x1 < 1200
+    # Slot is 600x900 (2:3); the visible strip of a 600-tall panel is 400 wide.
+    assert abs((x1 - x0) - 400) <= 2
+    # Nothing but page images in pages/ (the upscaler feeds it to Real-ESRGAN).
+    assert all(p.suffix == ".png" for p in env.project.pages_dir.iterdir())
+
+
+@_with_env
+def test_panel_slots_spread_pages_and_merge_on_skip(env):
+    import json
+    env.make_panel("page_1_panel_1", 600, 900, (10, 10, 10))
+    env.make_panel("page_2_panel_1", 1200, 900, (10, 10, 10))
+    comic = _comic([
+        _page(0, [_panel("A", _slot(1, 1, 1, 1))]),
+        _page(1, [_panel("A", _slot(1, 1, 1, 1))], span=2),
+    ], aspect=(2, 3))
+    _assemble_from_comic(env.project, comic, page_height_px=900)
+    first = json.loads((env.project.base_dir / "panel_slots.json").read_text())
+    assert first["page_2_panel_1"]["pages"] == [2, 3]
+
+    # Re-run without force: pages are skipped, but their records survive.
+    _assemble_from_comic(env.project, comic, page_height_px=900)
+    again = json.loads((env.project.base_dir / "panel_slots.json").read_text())
+    assert again == first
+
+
+# ---------------------------------------------------------------------------
 # Three-tier config resolution (through the public API)
 # ---------------------------------------------------------------------------
 

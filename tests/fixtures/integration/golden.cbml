@@ -1,0 +1,133 @@
+## I Quant To Drink Your Blood
+aspect: us-comic
+author: TESTING
+genre: comedy-drama horror
+description: A hedge fund analyst tries to survive office politics, friendship, and vampiric cravings without getting fired or staked.
+
+PAGE grid:3x2
+  A: [1-2, 1]
+  B: [3, 1]
+  C: [1, 2]
+  D: [2, 2]
+  E: [3, 2]
+
+PANEL A
+loc: THE_OFFICE
+chars: GERALD, YUKI
+shot: wide shot of dual monitors filled with red candlestick charts
+mood: financial panic mixed with comedy
+> Markets collapse across Gerald's screens.
+> Everyone nearby panics except Gerald, who looks mildly bored.
+YUKI: "How are you so calm?"
+GERALD: "I have seen worse crashes."
+YUKI: "Like 2008?"
+GERALD: "Much earlier."
+
+PANEL B
+loc: THE_OFFICE
+chars: DAVID
+shot: extreme closeup on narrowed eyes
+mood: paranoid
+> David writes notes in a tiny notebook labeled "GERALD???"
+DAVID: ~No reflection in the microwave door. Interesting.~
+
+PANEL C
+loc: THE_OFFICE
+chars: RANJEET
+shot: medium shot spinning in office chair eating crisps
+mood: absurdly casual
+> Ranjeet scrolls memes instead of working.
+RANJEET: "If the economy collapses maybe we all become forest goblins."
+[sfx pos:top-right color:#444444] CRONCH
+
+PANEL D
+loc: THE_OFFICE
+chars: GERALD
+shot: closeup on Gerald smelling the air suddenly
+mood: ominous shift
+> Gerald freezes.
+> His pupils narrow.
+[caption bg:#220000 color:#ffaaaa pos:top-left] Blood.
+[sfx pos:center color:#660000] THMP
+
+PANEL E
+loc: THE_OFFICE
+chars: INTERN
+shot: medium shot of a young intern with a paper cut
+mood: dark comedy
+> Across the room, an intern shakes a bleeding finger dramatically.
+INTERN: !"Paper cuts are brutal!"!
+
+PAGE spread:2 grid:2x2
+  A: [1, 1]
+  B: [2, 1]
+  C: [1, 2]
+  D: [2, 2]
+
+PANEL A
+loc: THE_OFFICE
+chars: GERALD, DAVID
+shot: dramatic wide confrontation shot across the office at night
+mood: horror-comedy climax
+> Stormlight flashes through the office windows as David slams garlic bread onto Gerald's desk.
+DAVID: !"EAT IT!"!
+[sfx pos:center color:#ffeeaa] THUD
+
+PANEL B
+loc: THE_OFFICE
+chars: GERALD, YUKI, RANJEET
+shot: chaotic reaction shot
+mood: frantic comedy
+> Gerald recoils in terror while Yuki and Ranjeet stare in confusion.
+RANJEET: "Why is this happening?"
+YUKI: "Honestly this explains a lot."
+
+PANEL C
+loc: THE_OFFICE
+chars: GERALD
+shot: horror closeup with red glowing eyes
+mood: sudden dark horror
+> Gerald's eyes blaze crimson.
+> Tiny fangs glint in the lightning.
+[sfx pos:center color:#aa0000] SKREEEE
+GERALD: !"I HAVE A CONDITION!"!
+
+PANEL D
+loc: THE_OFFICE
+chars: GERALD, DAVID, YUKI, RANJEET
+shot: wide comedic aftermath shot
+mood: awkward silence after chaos
+> Everyone stands frozen.
+> David slowly lowers the garlic bread.
+DAVID: "Honestly the vampire thing concerns me less than your Q3 numbers."
+GERALD: "Fair."
+
+PAGE preset:strip-3
+
+PANEL A
+loc: THE_BAR
+chars: GERALD, YUKI, RANJEET, DAVID
+shot: medium group shot sharing drinks awkwardly
+mood: warm sitcom ending
+> The entire group sits together after work.
+> David still looks deeply uncomfortable.
+DAVID: "So there are more of you?"
+GERALD: "Probably."
+
+PANEL B
+loc: THE_BAR
+chars: RANJEET
+shot: closeup proudly presenting another glowing cocktail
+mood: pure comedy
+> Ranjeet proudly presents another glowing cocktail.
+RANJEET: "I call this one the NASDAQ Nosferatu."
+[sfx pos:center color:#00ff88] BLORP
+
+PANEL C
+loc: THE_BAR
+chars: GERALD, YUKI
+shot: quiet final two-shot by the rain-covered window
+mood: bittersweet, hopeful
+> Gerald smiles genuinely for the first time.
+YUKI: "You know, for a vampire, you are kind of pathetic."
+GERALD: "That is the nicest thing anyone has said to me in centuries."

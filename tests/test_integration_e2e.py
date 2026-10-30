@@ -33,6 +33,7 @@ SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
 
 import lazycomics as lc  # noqa: E402
+from lazycomics import review  # noqa: E402
 from lazycomics.config import load_config  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures" / "integration"
@@ -223,6 +224,15 @@ def test_full_pipeline_e2e():
         img = Image.open(ppath)
         assert img.size[0] > 100 and img.size[1] > 100, \
             f"page {pnum} too small: {img.size}"
+
+    # Lettering survives assembly: no bubble/caption/SFX falls outside the
+    # part of its panel the page slot shows, and every drawn tail aims at a
+    # detected face. (Quality checks like reading order are reported by
+    # tools/golden_run.py, not asserted here.)
+    for pid in by_id:
+        hard = [i for i in review.check_panel(project, pid)
+                if i.kind in ("slot", "tail_anchor", "record")]
+        assert not hard, f"{pid}: {[str(i) for i in hard]}"
 
     # === Upscale (optional) =================================================
     upscaler_exe = config.get("upscaler", {}).get("executable", "realesrgan-ncnn-vulkan")

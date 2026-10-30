@@ -37,6 +37,11 @@ prefer that truth source when present (see TODO at the top of
 
 The output PNG may be reviewed and hand-overwritten; the renderer skips
 panels whose output already exists unless ``force=True``.
+
+Alongside each output PNG it writes ``panels_text/<panel_id>.layout.json``:
+what it placed and why (detected faces, each bubble's rect / tail anchor in
+CBML line order, caption and SFX boxes). ``lazycomics.review`` reads it to
+check reading order and overlaps without re-deriving the layout.
 """
 
 from __future__ import annotations
@@ -162,8 +167,12 @@ def render_text(
 
         panel_data = json.loads(enriched_path.read_text(encoding="utf-8"))
         img = Image.open(panel_path).convert("RGBA")
-        img = _render_one(img, panel_data, text_cfg)
+        layout: dict[str, Any] = {"size": list(img.size)}
+        img = _render_one(img, panel_data, text_cfg, record=layout)
         img.convert("RGB").save(out_path)
+        out_path.with_suffix(".layout.json").write_text(
+            json.dumps(layout, indent=2), encoding="utf-8",
+        )
         results[panel_id] = out_path
 
     return results
@@ -193,20 +202,29 @@ def _font_px(ratio: float, panel_w: int, text_cfg: dict[str, float]) -> int:
 
 
 def _render_one(img: Image.Image, panel: dict[str, Any],
-                text_cfg: dict[str, float]) -> Image.Image:
-    img = _render_captions(img, panel.get("caption_boxes") or [], text_cfg)
-    img = _render_sfx(img, panel.get("sfx_lines") or [], text_cfg)
+                text_cfg: dict[str, float],
+                record: dict[str, Any] | None = None) -> Image.Image:
+    img = _render_captions(img, panel.get("caption_boxes") or [], text_cfg, record)
+    img = _render_sfx(img, panel.get("sfx_lines") or [], text_cfg, record)
     img = _render_dialogue(
         img,
         panel.get("dialogue_lines") or [],
         panel.get("bubble_layout") or [],
         text_cfg,
+        record,
     )
     return img
 
 
+def _record(record: dict[str, Any] | None, key: str, item: Any) -> None:
+    """Append ``item`` to ``record[key]`` when the caller wants a layout record."""
+    if record is not None:
+        record.setdefault(key, []).append(item)
+
+
 def _render_captions(img: Image.Image, captions: list[dict[str, Any]],
-                     text_cfg: dict[str, float]) -> Image.Image:
+                     text_cfg: dict[str, float],
+                     record: dict[str, Any] | None = None) -> Image.Image:
     if not captions:
         return img
     draw = ImageDraw.Draw(img)
@@ -234,6 +252,7 @@ def _render_captions(img: Image.Image, captions: list[dict[str, Any]],
         x, y = _anchor_to_xy(pos, W, H, box_w, box_h, margin)
 
         draw.rectangle([x, y, x + box_w, y + box_h], fill=bg)
+        _record(record, "captions", [x, y, x + box_w, y + box_h])
 
         y_cursor = y + padding
         for line, (_, lh) in zip(lines, line_sizes):
@@ -243,7 +262,8 @@ def _render_captions(img: Image.Image, captions: list[dict[str, Any]],
 
 
 def _render_sfx(img: Image.Image, sfx_lines: list[dict[str, Any]],
-                text_cfg: dict[str, float]) -> Image.Image:
+                text_cfg: dict[str, float],
+                record: dict[str, Any] | None = None) -> Image.Image:
     if not sfx_lines:
         return img
     draw = ImageDraw.Draw(img)
@@ -260,6 +280,7 @@ def _render_sfx(img: Image.Image, sfx_lines: list[dict[str, Any]],
 
         text_w, text_h = _measure(draw, text, font)
         x, y = _anchor_to_xy(pos, W, H, text_w, text_h, margin, allow_center=True)
+        _record(record, "sfx", [x, y, x + text_w, y + text_h])
 
         # Outline for legibility against any background.
         outline = "#ffffff" if _is_dark(color) else "#000000"
@@ -284,6 +305,7 @@ def _render_dialogue(
     dialogue: list[dict[str, Any]],
     bubble_layout: list[dict[str, Any]],
     text_cfg: dict[str, float],
+    record: dict[str, Any] | None = None,
 ) -> Image.Image:
     """Place bubbles in their speaker's ``bubble_layout`` region.
 
@@ -313,6 +335,8 @@ def _render_dialogue(
     max_tail = max(_TAIL_MIN_PX, int(min(W, H) * text_cfg["tail_frac"]))
 
     faces = _detect_all_faces(img)
+    if record is not None:
+        record["faces"] = [list(f) for f in faces]
 
     # Speaker order = order of first mention in CBML.
     speaker_order: list[str] = []
@@ -341,7 +365,7 @@ def _render_dialogue(
     prev_rect: tuple[int, int, int, int] | None = None
     prev_speaker: str | None = None
 
-    for line in dialogue:
+    for line_no, line in enumerate(dialogue):
         speaker = (line.get("character") or "").strip()
         text = (line.get("text") or "").strip()
         if not text or speaker not in anchors:
@@ -381,6 +405,11 @@ def _render_dialogue(
         # at an arbitrary spot — we omit it rather than mislead.
         if has_face:
             _draw_tail(draw, rect, (ax, ay), bubble_type, max_tail)
+        _record(record, "bubbles", {
+            "line": line_no, "speaker": speaker, "type": bubble_type,
+            "rect": list(rect), "anchor": [ax, ay],
+            "tail": has_face and bubble_type in ("speech", "thought"),
+        })
 
         # Render the text last so it sits on top of bubble + tail fills.
         # Speech/whisper: left-aligned at the padding inset. Thought/shout:
