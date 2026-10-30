@@ -1,9 +1,7 @@
 """Face detection — hybrid YuNet + MediaPipe.
 
-A single source of truth for face detection across the package. Used by:
-
-* ``ref_preparer`` — face-aware crop of the primary reference image.
-* ``text_renderer`` — face-aware bubble placement and tail anchoring.
+A single source of truth for face detection across the package. Used by
+``text_renderer`` for face-aware bubble placement and tail anchoring.
 
 Why a hybrid: empirically, neither MediaPipe nor YuNet alone catches every
 face in stylised AI-generated comic panels. MediaPipe's ``face_detection``
@@ -14,11 +12,8 @@ medium / multi-character / stylised cases reliably, but tends to miss the
 huge-closeup case that MediaPipe gets. Running both and merging gives
 near-perfect coverage on the comic-art panels this package generates.
 
-Public API:
-
-* ``detect_faces(image) -> list[FaceBox]`` — full bboxes, one per face.
-* ``detect_face_centre(image) -> tuple[int, int] | None`` — convenience
-  for callers that only need the most-confident face's centre.
+Public API: ``detect_faces(image) -> list[FaceBox]`` — full bboxes, one
+per face.
 
 A ``FaceBox`` is ``(x0, y0, x1, y1, score)`` in pixel coordinates.
 
@@ -38,7 +33,7 @@ import mediapipe as mp
 import numpy as np
 from PIL import Image
 
-__all__ = ["FaceBox", "detect_faces", "detect_face_centre"]
+__all__ = ["FaceBox", "detect_faces"]
 
 
 _YUNET_MODEL_PATH = Path(__file__).parent / "assets" / "models" / "face_detection_yunet_2023mar.onnx"
@@ -71,19 +66,6 @@ def detect_faces(img: Image.Image) -> list[FaceBox]:
     yunet_boxes = _detect_yunet(img)
     mp_boxes = _detect_mediapipe(img)
     return _merge_and_dedup(yunet_boxes + mp_boxes)
-
-
-def detect_face_centre(img: Image.Image) -> tuple[int, int] | None:
-    """Centre of the highest-scoring face, or ``None`` when nothing detected.
-
-    Convenience for callers that just need a single anchor point (e.g.
-    face-aware cropping). Use ``detect_faces`` when you need all faces.
-    """
-    faces = detect_faces(img)
-    if not faces:
-        return None
-    best = max(faces, key=lambda f: f.score)
-    return ((best.x0 + best.x1) // 2, (best.y0 + best.y1) // 2)
 
 
 # ---------------------------------------------------------------------------

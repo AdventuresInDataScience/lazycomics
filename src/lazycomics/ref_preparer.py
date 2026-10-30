@@ -2,18 +2,15 @@
 
 Builds the per-panel reference image stack that gets passed to the
 generator (Wan2GP / Flux Klein 9B). Each panel ends up with one
-**primary** ref, face-aware cropped to the panel's target aspect and then
-sized to *exactly* the pixel resolution the bridge will request, plus zero
-or more **supporting** refs (style, location, additional characters) that
-pass through at their native aspect ratio.
+**primary** ref plus zero or more **supporting** refs (style, location,
+additional characters). The bridge sends them all, primary first, as
+Klein ``image_refs``.
 
-The primary's exact sizing matters because Klein takes its output aspect
-from this image (the task's ``image_start``), overriding the ``resolution``
-field; Wan2GP then buckets it to the latent grid. A primary that isn't
-already on that grid gets snapped to a near-square canonical size, so the
-panel comes out the wrong shape. Both this module and ``wan2gp_bridge``
-derive the target ``(W, H)`` from ``geometry.resolution_for_aspect`` so
-they cannot drift.
+Every ref keeps its native aspect ratio and is only downscaled to
+``working_resolution`` on the long edge. Wan2GP rescales each ``image_refs``
+entry to the output's pixel area at the ref's own aspect, so nothing here
+needs to match the panel shape — and cropping a character reference to a
+narrow panel slot would just throw away most of the character.
 
 The primary ref is selected from the ``primary_character``'s registered
 images when the enricher has set that field — this ensures the ref
@@ -33,14 +30,6 @@ File layout (plan §11):
 The user can override any prepared ref by dropping a PNG in
 ``refs_prepared/`` with the matching filename. ``prepare_references()``
 skips panels whose primary ref already exists unless ``force=True``.
-
-MediaPipe is a hard dependency — face-aware cropping is required to
-honour the user's authoring intent (e.g. a CBML ``shot: extreme closeup
-on face`` must not silently fall back to a centre crop that lands on
-the body). The only catch-all guard is around a per-image runtime
-failure (corrupt JPEG, etc.) so one bad source doesn't tank a whole
-project run — those are logged loudly and that single panel uses
-centre crop.
 """
 
 from __future__ import annotations
@@ -51,9 +40,7 @@ from typing import Any
 
 from PIL import Image
 
-from lazycomics import face_detector
 from lazycomics.asset_registry import get_style
-from lazycomics.geometry import resolution_for_aspect
 from lazycomics.models import Project, StyleAsset
 
 __all__ = ["prepare_references"]
@@ -89,9 +76,9 @@ def prepare_references(
         are skipped (the user may have hand-overridden it). If ``True``,
         all referenced panels are re-prepared.
     working_resolution
-        Long-edge target in pixels for the prepared images. Defaults to
-        1024 — a sweet spot for Klein 9B per plan §9. Larger values cost
-        VRAM at generation time.
+        Long-edge cap in pixels for the prepared images (downscale only).
+        Defaults to 1024. Wan2GP rescales every ref to the output's pixel
+        area anyway, so this sets source quality, not generation cost.
     """
     style = _try_get_style(project)
     style_refs = list(style.reference_images) if style else []
@@ -135,7 +122,6 @@ def _prepare_one(
     working_resolution: int,
 ) -> list[Path]:
     panel_id = panel["panel_id"]
-    target_aspect = float(panel.get("aspect_ratio") or 1.0)
 
     primary_source = _select_primary_source(panel)
     if primary_source is None:
@@ -146,26 +132,15 @@ def _prepare_one(
         print(f"[refs] {panel_id}: primary source missing: {primary_source}")
         return []
 
-    # Primary ref → Klein's ``image_start``. Klein takes the *output* aspect
-    # from this image (overriding the task's ``resolution`` field) and Wan2GP
-    # buckets it to the latent grid, so it must be produced at *exactly* the
-    # resolution the bridge will request — same (W, H) the bridge computes.
-    # We face-aware crop to that aspect, then resize to the exact dimensions
-    # (upscaling a small source if need be: a conditioning image at the wrong
-    # size is worse than a slightly soft one at the right size).
-    target_w, target_h = resolution_for_aspect(target_aspect, working_resolution)
-    img = Image.open(primary_source)
-    img = _crop_to_aspect(img, target_w / target_h)
-    img = img.resize((target_w, target_h), Image.LANCZOS)
+    # Primary: whole image at native aspect, same treatment as supporting.
+    img = _resize_long_edge(Image.open(primary_source), working_resolution)
 
     primary_out = project.refs_prepared_dir / f"{panel_id}_ref.png"
     img.save(primary_out)
     outputs = [primary_out]
 
-    # Supporting: passthrough at native aspect, only resize.
-    # Style refs go FIRST in the supporting list so they end up at
-    # image_refs[0] in the Wan2GP task — earlier positions get stronger
-    # conditioning weight than later ones in Klein/Kontext.
+    # Supporting: style refs first, then location + other characters. Klein
+    # has no per-ref weight, so this order is the only ranking signal it gets.
     supporting_sources = [Path(p) for p in style_refs] + _collect_supporting(panel, primary_source)
     for idx, src in enumerate(supporting_sources, start=1):
         if not src.is_file():
@@ -272,43 +247,6 @@ def _collect_supporting(panel: dict[str, Any], primary: Path) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
-def _crop_to_aspect(img: Image.Image, target_aspect: float) -> Image.Image:
-    """Crop ``img`` to ``target_aspect`` (w/h), face-aware when possible.
-
-    If source already matches target to within ~0.3% no crop is applied
-    (avoids one-pixel resizing artefacts). When MediaPipe finds a face,
-    the crop window centres on the face; otherwise it centres on the
-    image.
-    """
-    w, h = img.size
-    if h <= 0 or target_aspect <= 0:
-        return img
-    src_aspect = w / h
-    if abs(src_aspect - target_aspect) < 0.003:
-        return img
-
-    face_centre = _detect_face_centre(img)
-
-    if src_aspect > target_aspect:
-        # Source too wide — crop horizontally.
-        new_w = max(1, int(round(h * target_aspect)))
-        if face_centre:
-            cx = face_centre[0]
-        else:
-            cx = w // 2
-        x1 = max(0, min(w - new_w, cx - new_w // 2))
-        return img.crop((x1, 0, x1 + new_w, h))
-
-    # Source too tall — crop vertically.
-    new_h = max(1, int(round(w / target_aspect)))
-    if face_centre:
-        cy = face_centre[1]
-    else:
-        cy = h // 2
-    y1 = max(0, min(h - new_h, cy - new_h // 2))
-    return img.crop((0, y1, w, y1 + new_h))
-
-
 def _resize_long_edge(img: Image.Image, target: int) -> Image.Image:
     """Downscale so the longer edge equals ``target``. No-op if already smaller."""
     w, h = img.size
@@ -318,17 +256,6 @@ def _resize_long_edge(img: Image.Image, target: int) -> Image.Image:
     scale = target / long_edge
     new_size = (max(1, int(round(w * scale))), max(1, int(round(h * scale))))
     return img.resize(new_size, Image.LANCZOS)
-
-
-def _detect_face_centre(img: Image.Image) -> tuple[int, int] | None:
-    """Return ``(x, y)`` of the most-confident detected face, or ``None``.
-
-    Delegates to the hybrid YuNet + MediaPipe detector. Returns ``None``
-    when no face is detected — that's the correct behaviour for non-face
-    images (locations, objects) and the caller then centre-crops.
-    Module-level so tests can monkeypatch.
-    """
-    return face_detector.detect_face_centre(img)
 
 
 # ---------------------------------------------------------------------------

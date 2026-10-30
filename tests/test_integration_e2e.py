@@ -163,7 +163,7 @@ def test_full_pipeline_e2e():
         assert txt.is_file() and txt.stat().st_size > 10, f"prompt empty: {pid}"
 
     # === Prepare references =================================================
-    refs_result = lc.prepare_references(project, working_resolution=256)
+    refs_result = lc.prepare_references(project)
     assert len(refs_result) >= 0, "references should be prepared"
 
     # === LLM refinement (optional) ==========================================
@@ -184,12 +184,18 @@ def test_full_pipeline_e2e():
     gen = lc.generate_panels(project, force=True, config=config)
     assert len(gen) == len(panels), f"expected {len(panels)} panels generated, got {len(gen)}"
 
-    for pid in by_id:
+    for pid, panel in by_id.items():
         p = project.panels_dir / f"{pid}.png"
         assert p.is_file(), f"panel image missing: {pid}"
         img = Image.open(p)
         assert img.size[0] > 50 and img.size[1] > 50, \
             f"panel {pid} too small: {img.size}"
+        # A panel generated at the wrong aspect gets cover-cropped into its
+        # slot by the assembler, slicing off edge text and characters.
+        want = float(panel.aspect_ratio)
+        got = img.size[0] / img.size[1]
+        assert abs(got - want) / want <= 0.05, \
+            f"panel {pid} aspect {got:.3f} ({img.size}) != requested {want:.3f}"
 
     # === Skip-if-exists: re-run without force, confirm nothing changes =====
     mtimes_before = {p.name: p.stat().st_mtime

@@ -130,8 +130,12 @@ wan2gp:
   # model away from the reference images.
   guidance_scale: 3.5
 
-  # video_prompt_type: "KI" for Klein Image generation.
-  video_prompt_type: KI
+  # Klein reference mode. "I" = condition on image_refs (every ref, primary
+  # character first) and output exactly `resolution`. Do NOT use "KI": the K
+  # makes Wan2GP take the output *aspect* from the first ref (the style
+  # image), so every panel comes out that shape. Dropped automatically for
+  # panels with no refs (Wan2GP rejects "I" without one).
+  video_prompt_type: I
 
   # Long-edge resolution in pixels. Short edge derived from panel
   # aspect ratio and snapped to nearest 64.

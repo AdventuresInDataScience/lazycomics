@@ -97,22 +97,6 @@ def test_detect_faces_empty_when_both_silent(monkeypatch):
     assert face_detector.detect_faces(Image.new("RGB", (640, 640))) == []
 
 
-def test_detect_face_centre_returns_highest_scoring(monkeypatch):
-    """The centre helper should pick the most-confident face."""
-    high = FaceBox(0, 0, 100, 100, 0.95)   # centre (50, 50)
-    low = FaceBox(500, 500, 600, 600, 0.4)  # centre (550, 550)
-    monkeypatch.setattr(face_detector, "_detect_yunet", lambda img: [high])
-    monkeypatch.setattr(face_detector, "_detect_mediapipe", lambda img: [low])
-    centre = face_detector.detect_face_centre(Image.new("RGB", (640, 640)))
-    assert centre == (50, 50)
-
-
-def test_detect_face_centre_none_when_no_faces(monkeypatch):
-    monkeypatch.setattr(face_detector, "_detect_yunet", lambda img: [])
-    monkeypatch.setattr(face_detector, "_detect_mediapipe", lambda img: [])
-    assert face_detector.detect_face_centre(Image.new("RGB", (640, 640))) is None
-
-
 # ---------------------------------------------------------------------------
 # Asset wiring
 # ---------------------------------------------------------------------------

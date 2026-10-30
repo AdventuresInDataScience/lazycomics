@@ -1,29 +1,22 @@
 """Shared panel-geometry math.
 
-Lives in its own module so the two stages that must agree on a panel's
-pixel dimensions — ``ref_preparer`` (which shapes the primary reference)
-and ``wan2gp_bridge`` (which asks Wan2GP for an output resolution) — derive
-those dimensions from one place and can never drift apart.
-
-Why this matters: Klein/Kontext takes its *output* aspect from the
-``image_start`` reference image, overriding the ``resolution`` field of the
-task. Wan2GP buckets that reference to the model's latent grid (multiples
-of 64); a reference whose dimensions are not already on that grid gets
-snapped to a canonical near-square size, so the panel comes out the wrong
-shape. The fix is to prepare ``image_start`` at *exactly* the resolution
-the bridge will request — which means both stages must compute that
-resolution identically. Hence this single helper.
+``resolution_for_aspect`` turns a panel's aspect ratio into the pixel size
+``wan2gp_bridge`` requests from Wan2GP. Dimensions snap to multiples of 16
+— Wan2GP floors ``resolution`` to its VAE block size (16 for Flux/Klein),
+so anything finer is discarded. A coarser grid would distort narrow slots:
+on a 64-grid a 0.22 slot (227×1024) rounds to 256×1024 = 0.25, 12% off.
 """
 
 from __future__ import annotations
 
-_LATENT_MULTIPLE = 64
+_GRID = 16
+_MIN_EDGE = 64
 
 
 def _snap(value: float) -> int:
-    """Round ``value`` to the nearest multiple of the latent grid (>= one cell)."""
+    """Round ``value`` to the nearest multiple of the grid (>= ``_MIN_EDGE``)."""
     v = int(round(value))
-    return max(_LATENT_MULTIPLE, ((v + _LATENT_MULTIPLE // 2) // _LATENT_MULTIPLE) * _LATENT_MULTIPLE)
+    return max(_MIN_EDGE, ((v + _GRID // 2) // _GRID) * _GRID)
 
 
 def resolution_for_aspect(aspect_ratio: float, base_resolution: int) -> tuple[int, int]:
@@ -31,9 +24,8 @@ def resolution_for_aspect(aspect_ratio: float, base_resolution: int) -> tuple[in
 
     ``aspect_ratio`` is width/height (so < 1 is portrait, > 1 landscape).
     The long edge is ``base_resolution``; the short edge is derived from the
-    aspect and snapped to a multiple of 64 (the diffusion latent grid). The
-    long edge stays exactly ``base_resolution`` (already a multiple of 64 in
-    practice), so the returned size sits cleanly on the latent grid.
+    aspect and snapped to a multiple of 16 (Wan2GP's block size), floored at
+    64px so extreme aspects can't collapse.
     """
     if aspect_ratio <= 0:
         aspect_ratio = 1.0

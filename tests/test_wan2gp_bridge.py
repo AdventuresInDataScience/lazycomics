@@ -35,7 +35,8 @@ from lazycomics.wan2gp_bridge import (  # noqa: E402
     _get_character_region,
     _load_bridge_config,
     _read_prompt,
-    _warn_on_resolution_mismatch,
+    _warn_on_size_mismatch,
+    _WAN2GP_SETTINGS_VERSION,
     generate_panels,
 )
 
@@ -112,7 +113,7 @@ def _base_config():
             "architecture": "flux2_klein_9b",
             "default_steps": 4,
             "guidance_scale": 5,
-            "video_prompt_type": "KI",
+            "video_prompt_type": "I",
             "base_resolution": 1024,
             "seed": None,
             "cli_args": [],
@@ -158,11 +159,11 @@ def test_config_overrides():
 
 
 def test_resolution_portrait():
-    # 2:3 aspect = 0.667, portrait. Height=1024, width=1024*0.667=683→snapped to 704
+    # 2:3 aspect = 0.667, portrait. Height=1024, width=1024*0.667=683→snapped to 688
     res = _compute_resolution(2 / 3, 1024)
     w, h = res.split("x")
     assert int(h) == 1024
-    assert int(w) % 64 == 0
+    assert int(w) % 16 == 0
     assert int(w) > 0
 
 
@@ -171,7 +172,7 @@ def test_resolution_landscape():
     res = _compute_resolution(3 / 2, 1024)
     w, h = res.split("x")
     assert int(w) == 1024
-    assert int(h) % 64 == 0
+    assert int(h) % 16 == 0
 
 
 def test_resolution_square():
@@ -183,12 +184,12 @@ def test_resolution_extreme_portrait():
     res = _compute_resolution(1 / 3, 1024)
     w, h = res.split("x")
     assert int(h) == 1024
-    assert int(w) % 64 == 0
+    assert int(w) % 16 == 0
     assert int(w) < int(h)
 
 
 # ---------------------------------------------------------------------------
-# _warn_on_resolution_mismatch (image_start vs requested resolution tripwire)
+# _warn_on_size_mismatch (generated panel vs requested resolution tripwire)
 # ---------------------------------------------------------------------------
 
 
@@ -197,29 +198,31 @@ def _write_img(path, w, h):
     Image.new("RGB", (w, h), (128, 128, 128)).save(path)
 
 
-def test_no_warning_when_image_start_matches_resolution(capsys=None):
+def test_no_warning_when_panel_matches_resolution():
     import io
     from contextlib import redirect_stdout
     with tempfile.TemporaryDirectory() as d:
-        p = Path(d) / "ref.png"
+        p = Path(d) / "panel.png"
         _write_img(p, 704, 1024)
         buf = io.StringIO()
         with redirect_stdout(buf):
-            _warn_on_resolution_mismatch(p, "704x1024", "p1")
+            _warn_on_size_mismatch(p, "704x1024", "p1")
         assert "WARNING" not in buf.getvalue()
 
 
-def test_warning_when_image_start_diverges_from_resolution():
+def test_warning_when_panel_diverges_from_resolution():
     import io
     from contextlib import redirect_stdout
     with tempfile.TemporaryDirectory() as d:
-        p = Path(d) / "ref.png"
-        _write_img(p, 848, 848)  # the classic wrong-shape symptom
+        p = Path(d) / "panel.png"
+        # The 2026-06-10 symptom: a 448x1024 request came back at the style
+        # ref's landscape aspect.
+        _write_img(p, 784, 576)
         buf = io.StringIO()
         with redirect_stdout(buf):
-            _warn_on_resolution_mismatch(p, "704x1024", "p1")
+            _warn_on_size_mismatch(p, "448x1024", "p1")
         out = buf.getvalue()
-        assert "WARNING" in out and "848x848" in out and "704x1024" in out
+        assert "WARNING" in out and "784x576" in out and "448x1024" in out
 
 
 def test_warning_silent_on_missing_file():
@@ -227,7 +230,7 @@ def test_warning_silent_on_missing_file():
     from contextlib import redirect_stdout
     buf = io.StringIO()
     with redirect_stdout(buf):
-        _warn_on_resolution_mismatch(Path("/nonexistent/ref.png"), "704x1024", "p1")
+        _warn_on_size_mismatch(Path("/nonexistent/panel.png"), "704x1024", "p1")
     assert buf.getvalue() == ""  # diagnostics must never crash or spam
 
 
@@ -298,7 +301,9 @@ def test_task_has_required_fields():
     assert task["num_inference_steps"] == 4
     assert task["guidance_scale"] == 5
     assert task["seed"] == -1  # None seed → -1 (random)
-    assert task["image_start"] == str(Path("/img/ref.png"))
+    assert task["settings_version"] == _WAN2GP_SETTINGS_VERSION
+    assert task["video_prompt_type"] == "I"
+    assert task["image_refs"] == [str(Path("/img/ref.png"))]
 
 
 def test_task_with_explicit_seed():
@@ -309,14 +314,26 @@ def test_task_with_explicit_seed():
     assert task["seed"] == 42
 
 
-def test_task_supporting_refs():
+def test_task_all_refs_in_image_refs_primary_first():
+    # Klein ignores image_start, so the primary must travel in image_refs
+    # with the supporting refs — first, so it leads the conditioning.
     cfg = _load_bridge_config(_base_config())
     task = _build_wangp_task(
         {}, "x", "", [Path("/a.png"), Path("/b.png"), Path("/c.png")],
         "1024x1024", cfg,
     )
-    assert task["image_start"] == str(Path("/a.png"))
-    assert task["image_refs"] == [str(Path("/b.png")), str(Path("/c.png"))]
+    assert "image_start" not in task
+    assert task["image_refs"] == [
+        str(Path("/a.png")), str(Path("/b.png")), str(Path("/c.png")),
+    ]
+
+
+def test_task_default_video_prompt_type_has_no_k():
+    # "K" makes Wan2GP take the output aspect from image_refs[0] instead of
+    # `resolution` — the cause of every panel coming out landscape.
+    cfg = _load_bridge_config({"wan2gp": {"wgp_root": "/w", "python_bin": "/p"}})
+    task = _build_wangp_task({}, "x", "", [Path("/a.png")], "448x1024", cfg)
+    assert task["video_prompt_type"] == "I"
 
 
 def test_task_no_refs():
@@ -324,6 +341,24 @@ def test_task_no_refs():
     task = _build_wangp_task({}, "x", "", [], "1024x1024", cfg)
     assert "image_start" not in task
     assert "image_refs" not in task
+    # Wan2GP rejects "I" without refs (task skipped), so it's stripped.
+    assert task["video_prompt_type"] == ""
+
+
+def test_task_no_refs_keeps_non_ref_letters():
+    raw = _base_config()
+    raw["wan2gp"]["video_prompt_type"] = "TKI"
+    cfg = _load_bridge_config(raw)
+    task = _build_wangp_task({}, "x", "", [], "1024x1024", cfg)
+    assert task["video_prompt_type"] == "T"
+
+
+def test_task_explicit_video_prompt_type_honoured_with_refs():
+    raw = _base_config()
+    raw["wan2gp"]["video_prompt_type"] = "KI"
+    cfg = _load_bridge_config(raw)
+    task = _build_wangp_task({}, "x", "", [Path("/a.png")], "1024x1024", cfg)
+    assert task["video_prompt_type"] == "KI"
 
 
 def test_task_empty_negative_prompt_still_present():
@@ -426,6 +461,26 @@ def test_collect_outputs_handles_count_mismatch(env):
         # Should pair what it can
         assert "p1" in results
         assert "p2" not in results
+
+
+@_with_env
+def test_collect_outputs_warns_when_output_size_wrong(env):
+    import io
+    from contextlib import redirect_stdout
+    env.project.panels_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as out_dir:
+        out_dir = Path(out_dir)
+        _write_img(out_dir / "00001.png", 784, 576)
+        _write_img(out_dir / "00002.png", 448, 1024)
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            _collect_outputs(
+                out_dir, ["p1", "p2"], env.project,
+                {"p1": "448x1024", "p2": "448x1024"},
+            )
+        warnings = [l for l in buf.getvalue().splitlines() if "WARNING" in l]
+        assert len(warnings) == 1 and "p1" in warnings[0]
 
 
 # ---------------------------------------------------------------------------

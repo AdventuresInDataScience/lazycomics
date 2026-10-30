@@ -166,7 +166,8 @@ def generate_panels(
             wgp_output.mkdir()
             _build_queue_zip(single_tasks, queue_path)
             _run_wangp(queue_path, wgp_output, bridge_cfg)
-            results.update(_collect_outputs(wgp_output, single_ids, project))
+            requested = {pid: t["resolution"] for pid, t in zip(single_ids, single_tasks)}
+            results.update(_collect_outputs(wgp_output, single_ids, project, requested))
 
     # --- Sequential: each multi-inpaint panel runs base + N inpaint passes ---
     for pid, panel in multi_panels:
@@ -339,7 +340,7 @@ def _run_single_task_and_collect(
         except RuntimeError as e:
             print(f"[wan2gp]   ERROR: {e}")
             return None
-        collected = _collect_outputs(wgp_output, [pid], project)
+        collected = _collect_outputs(wgp_output, [pid], project, {pid: task["resolution"]})
         return collected.get(pid)
 
 
@@ -365,6 +366,12 @@ _DEFAULT_INPAINT_MASKING_STRENGTH = 0.3
 _DEFAULT_INPAINT_MASK_EXPAND = 0
 _DEFAULT_INPAINT_MASK_FEATHER = 0.04
 
+# wgp's settings-format version that our task fields were traced against
+# (WanGP v11.61). A task without it is treated as v0 and run through every
+# legacy migration — one of which (flux_handler.fix_settings, < 2.34) forces
+# denoising_strength to 1.0.
+_WAN2GP_SETTINGS_VERSION = 2.58
+
 
 def _load_bridge_config(config: dict[str, Any]) -> dict[str, Any]:
     """Extract and validate the ``wan2gp`` section with defaults."""
@@ -384,7 +391,7 @@ def _load_bridge_config(config: dict[str, Any]) -> dict[str, Any]:
         "architecture": cfg_get(config, "wan2gp.architecture", "flux2_klein_9b"),
         "default_steps": cfg_get(config, "wan2gp.default_steps", 4),
         "guidance_scale": cfg_get(config, "wan2gp.guidance_scale", 3.5),
-        "video_prompt_type": cfg_get(config, "wan2gp.video_prompt_type", "KI"),
+        "video_prompt_type": cfg_get(config, "wan2gp.video_prompt_type", "I"),
         "base_resolution": cfg_get(config, "wan2gp.base_resolution", 1024),
         "seed": cfg_get(config, "wan2gp.seed", 42),
         "cli_args": cfg_get(config, "wan2gp.cli_args", []),
@@ -420,7 +427,8 @@ def _build_wangp_task(
     Wan2GP version uses different field names, update this function only.
 
     Field names verified against an exported ``flux2_klein_9b`` settings
-    JSON from Wan2GP v11.61.
+    JSON from Wan2GP v11.61; field *behaviour* traced in that version's
+    ``wgp.py`` (see ``Docs/PLAN.md`` W1).
     """
     task: dict[str, Any] = {
         "model_type": bridge_cfg["architecture"],
@@ -434,26 +442,21 @@ def _build_wangp_task(
         "seed": bridge_cfg["seed"] if bridge_cfg["seed"] is not None else -1,
         "activated_loras": activated_loras or [],
         "loras_multipliers": loras_multipliers,
+        "settings_version": _WAN2GP_SETTINGS_VERSION,
     }
 
-    # Primary ref → image_start (Kontext/Klein latent-stitching input).
-    # Supporting refs → image_refs (additional conditioning).
+    # Every ref → image_refs, primary first. Not image_start: wgp discards
+    # it unless "S" is in image_prompt_type, which Klein doesn't allow, so a
+    # primary sent there never reached the model.
     if refs:
-        task["image_start"] = str(refs[0])
-        _warn_on_resolution_mismatch(refs[0], resolution, panel_data.get("panel_id", "?"))
-    if len(refs) > 1:
-        task["image_refs"] = [str(r) for r in refs[1:]]
+        task["image_refs"] = [str(r) for r in refs]
 
-    # Auto-adjust video_prompt_type based on provided refs if not tightly bound
-    if "video_prompt_type" not in bridge_cfg:
-        if len(refs) == 0:
-            task["video_prompt_type"] = "T"
-        elif len(refs) == 1:
-            task["video_prompt_type"] = "K"
-        else:
-            task["video_prompt_type"] = "KI"
-    else:
-        task["video_prompt_type"] = bridge_cfg["video_prompt_type"]
+    # "I" conditions on image_refs. Adding "K" makes wgp take the output
+    # *aspect* from image_refs[0] and treat ``resolution`` as a pixel budget
+    # only — that's how every panel came out the shape of the style ref.
+    # wgp rejects "I"/"K" when there are no refs, so strip them then.
+    vpt = bridge_cfg["video_prompt_type"]
+    task["video_prompt_type"] = vpt if refs else "".join(c for c in vpt if c not in "KI")
 
     return task
 
@@ -636,21 +639,20 @@ def _build_inpaint_prompt(
 # ---------------------------------------------------------------------------
 
 
-def _warn_on_resolution_mismatch(
-    image_start: Path, resolution: str, panel_id: str, tol: float = 0.05,
+def _warn_on_size_mismatch(
+    image: Path, resolution: str, panel_id: str, tol: float = 0.05,
 ) -> None:
-    """Warn when ``image_start``'s pixel size diverges from ``resolution``.
+    """Warn when a generated panel's pixel size diverges from ``resolution``.
 
-    Klein takes its output aspect from ``image_start``, so if the prepared
-    primary ref isn't (close to) the requested ``WxH`` the panel comes out
-    the wrong shape. ``ref_preparer`` now sizes the primary exactly, so this
-    should never fire — it's a tripwire that catches a future regression
-    (e.g. ``working_resolution`` drifting from ``base_resolution``).
+    wgp can silently override the requested size (a ``"K"`` in
+    ``video_prompt_type`` takes the output aspect from the first image ref),
+    and the assembler then cover-crops the wrong-shape panel into its slot,
+    slicing off edge text. This tripwire surfaces that at generation time.
     """
     try:
         want_w, want_h = (int(x) for x in resolution.split("x"))
         from PIL import Image
-        with Image.open(image_start) as im:
+        with Image.open(image) as im:
             got_w, got_h = im.size
     except Exception:
         return  # never let a diagnostic break generation
@@ -660,9 +662,9 @@ def _warn_on_resolution_mismatch(
     dh = abs(got_h - want_h) / want_h
     if dw > tol or dh > tol:
         print(
-            f"[wan2gp] WARNING: {panel_id} image_start is {got_w}x{got_h} but "
-            f"requested {want_w}x{want_h} — Klein keys output aspect off "
-            f"image_start, so the panel may come out the wrong shape.",
+            f"[wan2gp] WARNING: {panel_id} came out {got_w}x{got_h} but "
+            f"{want_w}x{want_h} was requested — the assembler will crop it "
+            f"to fit its slot.",
             flush=True,
         )
 
@@ -670,10 +672,7 @@ def _warn_on_resolution_mismatch(
 def _compute_resolution(aspect_ratio: float, base_resolution: int) -> str:
     """Convert a panel aspect ratio to a ``"WxH"`` resolution string.
 
-    Delegates to :func:`lazycomics.geometry.resolution_for_aspect` so the
-    bridge and ``ref_preparer`` derive panel dimensions from one place — the
-    prepared ``image_start`` reference must match this exactly or Klein
-    snaps it to the wrong shape (see ``geometry`` module docstring).
+    Delegates to :func:`lazycomics.geometry.resolution_for_aspect`.
     """
     w, h = resolution_for_aspect(aspect_ratio, base_resolution)
     return f"{w}x{h}"
@@ -793,9 +792,10 @@ def _build_queue_zip(tasks: list[dict[str, Any]], queue_path: Path) -> None:
         for task_idx, task in enumerate(tasks):
             task_copy = dict(task)
 
-            # Embed single-image attachment keys. image_start/end are the
-            # base-pass inputs (Kontext); image_guide/mask are the inpaint
-            # inputs (control image + mask). See ATTACHMENT_KEYS in wgp.py.
+            # Embed single-image attachment keys. image_guide/mask are the
+            # inpaint inputs (control image + mask); image_start/end are
+            # packed if present but Klein ignores them (base passes send
+            # everything via image_refs). See ATTACHMENT_KEYS in wgp.py.
             for key in ("image_start", "image_end", "image_guide", "image_mask"):
                 if key in task_copy:
                     src = Path(task_copy[key])
@@ -879,12 +879,16 @@ def _collect_outputs(
     wgp_output_dir: Path,
     panel_ids: list[str],
     project: Project,
+    resolutions: dict[str, str] | None = None,
 ) -> dict[str, Path]:
     """Move generated images from Wan2GP output dir to ``panels/``.
 
     Wan2GP writes outputs sequentially (task order matches panel_ids
     order). We glob for image files, sort them, and pair with panel_ids
     positionally. If the count doesn't match, we log and pair what we can.
+
+    ``resolutions`` maps panel ID → the requested ``"WxH"``; each collected
+    panel is checked against it (:func:`_warn_on_size_mismatch`).
 
     Wan2GP extracts queue contents into ``output/_loaded_queue_cache/``
     (wgp.py:1535) — we must skip that directory, otherwise the input
@@ -909,5 +913,7 @@ def _collect_outputs(
         shutil.copy2(src, dst)
         results[pid] = dst
         print(f"[wan2gp] {pid} -> {dst.name}")
+        if resolutions and pid in resolutions:
+            _warn_on_size_mismatch(dst, resolutions[pid], pid)
 
     return results

@@ -9,9 +9,9 @@ These complement the per-module tests by:
    spread, two characters, dialogue, captions, and SFX — to catch
    cross-stage contract drift that single-module tests can miss.
 
-MediaPipe-backed seams (``_detect_face_centre``, ``_bubbles_should_go_top``)
-are monkeypatched off to keep these tests deterministic and fast — the
-per-module tests already cover those code paths thoroughly.
+The face-detection seam (``text_renderer._detect_all_faces``) is
+monkeypatched off to keep these tests deterministic and fast — the
+per-module tests already cover that code path thoroughly.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from PIL import Image
 SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
 
-from lazycomics import ref_preparer, text_renderer  # noqa: E402
+from lazycomics import text_renderer  # noqa: E402
 from lazycomics.assembler import assemble_pages  # noqa: E402
 from lazycomics.asset_registry import register_character, register_style  # noqa: E402
 from lazycomics.enricher import enrich  # noqa: E402
@@ -43,18 +43,16 @@ from lazycomics.text_renderer import render_text  # noqa: E402
 
 
 class _Env:
-    """Tmp workspace with a project. Patches MediaPipe seams to stay fast."""
+    """Tmp workspace with a project. Patches the face-detection seam to stay fast."""
 
     def __init__(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.cbml_path = self.root / "story.cbml"
 
-        # MediaPipe seams: covered in isolation by the per-module tests;
+        # Face-detection seam: covered in isolation by the per-module tests;
         # here we care about pipeline integration, not the detector.
-        self._orig_face = ref_preparer._detect_face_centre
         self._orig_faces = text_renderer._detect_all_faces
-        ref_preparer._detect_face_centre = lambda img: None
         text_renderer._detect_all_faces = lambda img: []
 
     def write_cbml(self, body: str) -> Path:
@@ -70,7 +68,6 @@ class _Env:
         return path
 
     def close(self):
-        ref_preparer._detect_face_centre = self._orig_face
         text_renderer._detect_all_faces = self._orig_faces
         self.tmp.cleanup()
 
