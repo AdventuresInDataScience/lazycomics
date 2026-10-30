@@ -40,6 +40,10 @@ class _Env:
 
         # Default: no faces detected. Individual tests override.
         self._orig_detect = text_renderer._detect_all_faces
+        # Face identity downloads a model and reads real faces; off by
+        # default (tests that exercise it patch it themselves).
+        self._orig_identity = text_renderer._identity_similarity
+        text_renderer._identity_similarity = lambda img, faces, refs: None
         text_renderer._detect_all_faces = lambda img: []
 
     def set_faces(self, faces: list[tuple[int, int, int, int]]):
@@ -68,6 +72,7 @@ class _Env:
 
     def close(self):
         text_renderer._detect_all_faces = self._orig_detect
+        text_renderer._identity_similarity = self._orig_identity
         self.tmp.cleanup()
 
 
@@ -1129,3 +1134,69 @@ def test_tail_is_lengthened_to_a_visible_stub():
 def test_tail_reports_not_drawn_when_speaker_is_level_with_bubble():
     draw = ImageDraw.Draw(Image.new("RGB", (400, 400)))
     assert text_renderer._draw_tail(draw, (100, 100, 300, 160), (350, 130), "speech", 40) is False
+
+
+# Identity blend — similarities are the real SFace values measured on the
+# golden panels in the W3.2 spike.
+
+
+def test_identity_fixes_mirrored_composition():
+    # Golden page_4_panel_1: the generator drew David left and Ranjeet right;
+    # the CBML order predicts David far right. Position alone gives the left
+    # face to Yuki and the right one to David.
+    chars = ["GERALD", "YUKI", "RANJEET", "DAVID"]
+    left, right = _face(0.31, 62), _face(0.82, 54)
+    sims = {"DAVID": [0.34, 0.19], "RANJEET": [0.28, 0.26],
+            "YUKI": [0.12, 0.15], "GERALD": [-0.02, -0.00]}
+    got = text_renderer._match_characters_to_faces(chars, _regions(chars, 1000),
+                                                    [left, right], 1000, similarity=sims)
+    assert got == {"DAVID": left, "RANJEET": right}
+
+
+def test_weak_identity_does_not_overrule_correct_position():
+    # Golden page_2_panel_2: identity alone swaps Gerald (drawn off-model)
+    # and Ranjeet; blended with position, the correct match stands.
+    chars = ["GERALD", "YUKI", "RANJEET"]
+    bg, g, y, r = _face(0.08, 49), _face(0.24, 137), _face(0.60, 103), _face(0.80, 121)
+    sims = {"GERALD": [None, 0.21, 0.16, 0.28], "YUKI": [None, 0.29, 0.54, 0.38],
+            "RANJEET": [None, 0.31, 0.37, 0.24]}
+    got = text_renderer._match_characters_to_faces(chars, _regions(chars, 1000),
+                                                    [bg, g, y, r], 1000, similarity=sims)
+    assert got == {"GERALD": g, "YUKI": y, "RANJEET": r}
+
+
+def test_identity_without_usable_evidence_falls_back_to_position():
+    # No face could be aligned: behave exactly like position-only matching,
+    # including failing closed on an ambiguous face.
+    chars = ["A", "B"]
+    face = [_face(0.50, 80)]
+    sims = {"A": [None], "B": [None]}
+    assert text_renderer._match_characters_to_faces(
+        chars, _regions(chars, 1000), face, 1000, similarity=sims) == {}
+
+
+@_with_env
+def test_identity_used_only_with_references_and_several_characters(env):
+    calls = []
+    text_renderer._identity_similarity = (
+        lambda img, faces, refs: calls.append(dict(refs)) or {c: [0.0] * len(faces) for c in refs})
+    env.make_panel("p1", 800, 600, colour=(40, 40, 40))
+    env.set_faces([(100, 300, 180, 380), (600, 300, 680, 380)])
+    two = [{"identifier": "NOVA", "reference_images": ["/refs/nova.png"]},
+           {"identifier": "REX", "reference_images": []}]
+    # As the enricher writes it: bubble_layout names every panel character.
+    layout_two = [
+        {"character": "NOVA", "x_frac": 0.0, "y_frac": 0, "width_frac": 0.5, "height_frac": 1},
+        {"character": "REX", "x_frac": 0.5, "y_frac": 0, "width_frac": 0.5, "height_frac": 1},
+    ]
+    env.write_enriched("p1", characters=two, bubble_layout=layout_two, dialogue_lines=[
+        {"character": "NOVA", "text": "Hi", "bubble_type": "speech"}])
+    render_text(env.project)
+    assert calls == [{"NOVA": "/refs/nova.png"}]
+    assert _layout(env)["matching"] == "position+identity"
+
+    calls.clear()
+    env.write_enriched("p1", characters=two[:1], bubble_layout=layout_two[:1], dialogue_lines=[
+        {"character": "NOVA", "text": "Hi", "bubble_type": "speech"}])
+    render_text(env.project, force=True)
+    assert calls == [] and _layout(env)["matching"] == "position"

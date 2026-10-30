@@ -30,6 +30,12 @@ pip install lazycomics
 
 Requires **Python 3.10 – 3.12**. (MediaPipe doesn't ship 3.13 wheels yet.)
 
+The first time text is rendered on a multi-character panel, lazycomics
+downloads OpenCV's SFace face-recognition model (~37 MB, checksum-verified)
+into `src/lazycomics/assets/models/`. It's used to work out which character
+a face belongs to. Offline, rendering still works and matches speakers by
+position only.
+
 Optional extras:
 
 ```bash

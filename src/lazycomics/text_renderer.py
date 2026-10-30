@@ -23,10 +23,12 @@ Four bubble types, each with a distinct shape:
 Face-aware placement: ``_detect_all_faces`` returns all face bboxes (hybrid
 YuNet + MediaPipe). Panel characters are matched to faces using the
 enricher's predicted left-to-right order as a prior (see
-``_match_characters_to_faces``); a speaker with no confident match gets no
-tail rather than a wrong one. Best-effort caveat: the match is positional,
-so a panel where the generator mirrored the predicted order gets mirrored
-tails — fixing that needs identity (Docs/PLAN.md W3.2).
+``_match_characters_to_faces``), nudged on multi-character panels by face
+identity against each character's reference image (``face_identity``,
+OpenCV SFace — downloaded on first use). A speaker with no confident match
+gets no tail rather than a wrong one. Best-effort caveat: identity is weak
+on comic art, so it only overrules position when the evidence is clear; a
+mirrored panel with weak evidence still gets mirrored tails.
 
 Bubbles are then laid out together (``_layout_bubbles``) so they read in
 CBML order by construction, without overlapping each other or the
@@ -62,7 +64,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from lazycomics import face_detector
+from lazycomics import face_detector, face_identity
 from lazycomics.config import cfg_get, load_config
 from lazycomics.models import Project
 
@@ -252,6 +254,8 @@ def _render_one(img: Image.Image, panel: dict[str, Any],
         rec,
         obstacles=rec.get("captions", []) + rec.get("sfx", []),
         known=known,
+        refs={c["identifier"]: c["reference_images"][0]
+              for c in panel.get("characters") or [] if c.get("reference_images")},
     )
     return img
 
@@ -350,6 +354,11 @@ _MIN_FACE_FRAC = 0.5
 # centre is within this fraction of the panel width of its own match's is
 # ambiguous, and that speaker gets no tail (fail closed).
 _AMBIGUOUS_FRAC = 0.05
+# Identity blend: score = SFace cosine - this x |face - predicted centre| / W.
+# Chosen on the golden panels (keeping their correct matches needs > 0.125;
+# fixing the mirrored page_4_panel_1 needs < 0.45), then checked on four
+# held-out W1 panels: no correct match broken (Docs/PLAN.md W3.2).
+_IDENTITY_POSITION_WEIGHT = 0.25
 _BUBBLE_GAP = 14
 
 
@@ -362,12 +371,15 @@ def _render_dialogue(
     *,
     obstacles: list[list[int]] | None = None,
     known: dict[str, Any] | None = None,
+    refs: dict[str, str] | None = None,
 ) -> Image.Image:
     """Lay out and draw the dialogue bubbles, in CBML reading order.
 
     1. **Who is where.** Each panel character is matched to a detected face
        (:func:`_match_characters_to_faces`) so tails point at the right
-       speaker; a speaker with no confident match gets no tail and a bubble
+       speaker — by predicted position, nudged by face identity against
+       each character's reference image (``refs``) when there are several
+       characters; a speaker with no confident match gets no tail and a bubble
        near their predicted ``bubble_layout`` region instead. ``known``
        (``detected_faces`` / ``actual_character_regions`` persisted from an
        earlier render of the same panel image, or hand edits) overrides
@@ -418,7 +430,12 @@ def _render_dialogue(
     if known.get("actual_character_regions") is not None:
         regions = {c: tuple(r) for c, r in known["actual_character_regions"].items()}
     else:
-        regions = _match_characters_to_faces(characters, region_by_char, faces, W)
+        identity = (_identity_similarity(img, faces, refs)
+                    if refs and faces and len(characters) > 1 else None)
+        regions = _match_characters_to_faces(characters, region_by_char, faces, W,
+                                             similarity=identity)
+        if record is not None:
+            record["matching"] = "position+identity" if identity else "position"
     # A matched region is a face even if the detector missed it (a hand
     # correction for a missed face): keep bubbles off it like any other.
     faces = list(faces) + [r for r in regions.values() if r not in faces]
@@ -545,6 +562,7 @@ def _match_characters_to_faces(
     region_by_char: dict[str, tuple[int, int, int, int]],
     faces: list[tuple[int, int, int, int]],
     W: int,
+    similarity: dict[str, list[float | None]] | None = None,
 ) -> dict[str, tuple[int, int, int, int]]:
     """Map panel characters to detected face boxes.
 
@@ -560,9 +578,14 @@ def _match_characters_to_faces(
       match that's ambiguous (another character's centre nearly as close) so
       that speaker gets no tail rather than a wrong one.
 
-    Characters left unmatched are absent from the result. Positional
-    matching can't tell when the generator mirrored the predicted order;
-    that needs identity (Docs/PLAN.md W3.2).
+    With ``similarity`` (face-identity evidence from ``face_identity``:
+    character → cosine per face), the assignment instead maximises each
+    pair's similarity minus ``_IDENTITY_POSITION_WEIGHT`` × its distance
+    from the predicted centre (as a fraction of the width). Identity can
+    then overrule a mirrored prediction, while position still wins when the
+    identity signal is weak — as on comic art it usually is.
+
+    Characters left unmatched are absent from the result.
     """
     if not faces or not characters:
         return {}
@@ -574,6 +597,19 @@ def _match_characters_to_faces(
         return (f[0] + f[2]) / 2
 
     centre = {c: region_by_char[c][0] + region_by_char[c][2] / 2 for c in characters}
+
+    if similarity and any(s is not None for sims in similarity.values() for s in sims):
+        index = {f: i for i, f in reversed(list(enumerate(faces)))}
+
+        def score(c, f):
+            sim = (similarity.get(c) or [])[index[f]] if c in similarity else None
+            return (sim or 0.0) - _IDENTITY_POSITION_WEIGHT * abs(face_x(f) - centre[c]) / W
+
+        if len(characters) <= len(cands):
+            options = ([*zip(characters, p)] for p in itertools.permutations(cands, len(characters)))
+        else:
+            options = ([*zip(p, cands)] for p in itertools.permutations(characters, len(cands)))
+        return dict(max(options, key=lambda pairs: sum(score(c, f) for c, f in pairs)))
 
     if len(cands) == len(characters):
         by_x = sorted(characters, key=lambda c: centre[c])
@@ -1147,6 +1183,17 @@ def _is_dark(hex_color: str) -> bool:
 # ---------------------------------------------------------------------------
 # Face detection (module-level so tests can monkeypatch)
 # ---------------------------------------------------------------------------
+
+
+def _identity_similarity(
+    img: Image.Image,
+    faces: list[tuple[int, int, int, int]],
+    refs: dict[str, str],
+) -> dict[str, list[float | None]] | None:
+    """Per-character similarity to each face (``face_identity``; may download
+    its model on first use). Module-level so tests can monkeypatch.
+    """
+    return face_identity.similarity(img, faces, refs)
 
 
 def _detect_all_faces(img: Image.Image) -> list[tuple[int, int, int, int]]:

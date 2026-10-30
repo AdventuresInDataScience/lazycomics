@@ -221,3 +221,5 @@ test_live_output_queue/
 test_e2e_output/
 golden_output/
 golden_*/
+# Downloaded on first use by lazycomics.face_identity (see that module).
+src/lazycomics/assets/models/face_recognition_sface_2021dec.onnx

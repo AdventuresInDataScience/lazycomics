@@ -15,7 +15,7 @@ turned out to be wrong.
 | W0 Housekeeping | **Done** 2026-10-30: `test_e2e_output/` and `golden_output/` gitignored and untracked; stray script and logs removed; README and example updated. |
 | W1 Generation contract | **Landed; pending a full e2e run.** Verified on 17 panels (problems 1, 2). Two small items remain (see W1). |
 | W2 Verification loop | **Done and accepted** 2026-10-30. `tools/golden_run.py` regenerates the 12-panel golden subset in one command (582s from scratch, misses the <8 min target); the no-GPU loop takes 10s. See W2. |
-| W3 Bubble layout | **Built 2026-10-30; one open decision.** Reading order, line spacing, narrow-panel text, persistence and polish are done and verified on real art. Speaker attribution is fixed except where the generator mirrored the predicted character order: 2 golden panels. Fixing those needs identity matching, which W3.2 left as a decision (see W3). Done-when not met until that's decided. |
+| W3 Bubble layout | **Done 2026-10-30, pending your review.** Done-when met on the golden subset (order, tails, narrow text). Identity matching (OpenCV SFace, option a) is blended with position and downloads its model on first use. Residual: one tail-less shout and one held-out panel still mis-attributed (problem 4). See W3. |
 | W4–W6 | Not started. |
 
 ---
@@ -52,7 +52,7 @@ the W1 re-run and the golden runs:
 | 1 | **Panel dimensions** — **FIXED, verified 2026-10-30.** 17/17 re-run panels came out at exactly the requested size (448×1024 where June gave 784×576, 224×1024 where it gave 592×448, 1024×512 where it gave 848×624), all within 1.6% of slot aspect. | RESOLVED | Every panel comes out ~4:3 landscape whatever was requested. A 0.44 portrait slot gets 784×576; a 2:1 slot gets 848×624; a 0.22 slot gets 592×448. The pixel *area* matches the request; the *aspect* doesn't. | **Confirmed in Wan2GP source.** The `"K"` in `video_prompt_type: KI` makes wgp take the output aspect from `image_refs[0]`, which is the style ref (1342×996). `resolution` only sets the pixel budget (`fit_canvas: 0`). The formula reproduces 784×576, 1184×880 and 848×624 exactly. No check compares *output* dims to the request, so this went unnoticed. |
 | 2 | **Text cut off / bubbles in odd places** (final pages) — **FIXED with #1, verified 2026-10-30.** Re-run pages have no edge-clipped text. `page_010` panel 3 has its characters back. `page_005`'s 2:1 panels regained bubbles that cropping had removed entirely ("Later that night.", "Constantly."). | RESOLVED | On the un-cropped `panels_text/` images, bubbles are mostly well placed and fully legible. On assembled pages, text is sliced at the panel edges. | Downstream of #1: the assembler's `cover` fit crops a 1.35 panel into a 0.44 slot (keeping ~33% of the width) or a 0.22 slot (~17%). `page_010` panel 3 loses its characters entirely. |
 | 3 | **Bubble reading order** — **FIXED (W3.1), verified 2026-10-30.** Order now holds by construction. Story `page_2_panel_2`, reversed in the W1 re-run, reads correctly after re-lettering, and the checks find no order or overlap issues across all 17 W1-run panels or the 12 golden panels. | RESOLVED | `page_3_panel_1`: CBML order Yuki→Gerald→Yuki→Gerald is rendered fully reversed (last line top-left, first line bottom-centre). | `_place_bubble` is greedy. The first line takes the cheapest slot, which is just above its speaker's head and therefore *low*. Each later line can only go up. The "earlier is higher" bias can't recover. |
-| 4 | **Bubble tail points at wrong speaker** — **mostly fixed (W3.2, cheap version); mirrored panels remain.** Fixed: golden `page_1_panel_1` (background faces had taken both speakers' places) and `page_2_panel_2` (both tails wrong because a silent character was ignored). Remaining, needing identity: golden `page_4_panel_1`, where David's tail points at Ranjeet (Gerald's wrong tail is gone, fail-closed). Also golden `page_2_panel_1`, a **regression**: David's "EAT IT!" shout (no tail) moved from neutral top-centre to beside Gerald, because counting all characters assigns the mirrored faces. Not machine-checkable; visible on `sheet_pages.png`. | RESOLVED | `page_8_panel_4`: David's line has its tail on Gerald. | `_resolve_speaker_anchors` sorts *speakers only* left to right and matches them to *all* detected faces sorted by x. Silent characters, background extras, or one false-positive face shift every match by one. |
+| 4 | **Bubble tail points at wrong speaker** — **fixed for every golden tail (W3.2 + SFace identity blend), 2026-10-30; two placements remain.** Fixed: golden `page_1_panel_1` (background faces had taken both speakers' places) and `page_2_panel_2` (both tails wrong because a silent character was ignored). Golden `page_4_panel_1` (mirrored; David's tail pointed at Ranjeet) was fixed by the identity blend. **Remaining:** golden `page_2_panel_1`, a **regression vs the June baseline**: David's tail-less "EAT IT!" shout sits beside Gerald, and identity evidence is too weak to overrule position. Held-out story `page_4_panel_3`: the Intern has no reference image and the cast was reordered, so 3 of 4 faces are still mis-matched. Not machine-checkable; visible on `sheet_pages.png`. | RESOLVED | `page_8_panel_4`: David's line has its tail on Gerald. | `_resolve_speaker_anchors` sorts *speakers only* left to right and matches them to *all* detected faces sorted by x. Silent characters, background extras, or one false-positive face shift every match by one. |
 | 5 | **Character drift** — **much improved on solo panels after W1 (first look, not yet measured).** `page_006`'s three Gerald-solo panels now show one consistent young man with messy brown hair. The `page_002` desk panel shows the same Gerald where June had a white-haired stranger. **But not every panel:** in the golden baseline Gerald is still a white-haired old man in the golden `page_1_panel_4` close-up (his ref passed first; the prompt calls him "a pale white hedge fund analyst", see W4.2). He has white spiky hair in golden `page_2_panel_2`. Formal re-baseline is W4.1. | OPEN | Worst on **solo** panels. Gerald's ref is young with brown hair; solo panels 3-4 and 6-1..3 show a white-haired old man and a clownish face. **Multi-character** panels are often excellent: in `page_8_panel_4` all four characters match their refs. | **Confirmed in Wan2GP source: `image_start` is silently discarded for Klein.** It's kept only if `"S"` is in `image_prompt_type`, which Klein doesn't allow. The primary character's ref goes *only* to `image_start` and is excluded from `image_refs` (`ref_preparer._collect_supporting`). So the most important character on every panel has had **no visual reference**; only the other characters (in `image_refs`) were conditioned. |
 | 6 | **Inpaint quirks** ("two disjointed halves") | "Addressed, visual confirmation pending" | Not exercised since May. `enricher.multi_char_strategy: auto` routes every LoRA-free multi-char panel to a single pass, so all 33 panels in the June run were `single`. | **Confirmed in Wan2GP source: our inpaint settings never applied.** Tasks don't send `settings_version`, so `flux_handler.fix_settings` forces `denoising_strength = 1.0`, overriding our 0.25. `masking_strength` 0.3 locks the area outside the mask for only ~2 of 4 steps, and flux2 never pastes the original pixels back. Net effect: the whole panel gets regenerated, so the May "two disjointed halves" came from Wan2GP's settings, not our masks. Dormant until a character has a LoRA. |
 | 7 | Gibberish signage ("PICAK", "FIOOUFEK") | — | Neon signs in the bar scenes carry nonsense text. | Location descriptions invite signage, and the negative prompt is inert (#8). |
@@ -249,9 +249,9 @@ no regeneration was needed.
    - rank match when counts are equal, else minimum total distance;
    - fail closed when ambiguous (within 5% of panel width).
 
-   Fixed golden `page_1_panel_1` and `page_2_panel_2`. **Not fixed, as
-   predicted:** mirrored compositions, golden `page_4_panel_1` and
-   `page_2_panel_1` (problem 4). **Decision pending:** see below.
+   Fixed golden `page_1_panel_1` and `page_2_panel_2`. Mirrored
+   compositions can't be fixed by position; the identity decision below
+   (option a) fixed one of the two.
 3. **Persist** → `render_text` writes `detected_faces`,
    `actual_character_regions` (character → face box) and
    `detected_faces_for` (sha1 of the panel image) into the enriched JSON.
@@ -277,21 +277,65 @@ no regeneration was needed.
 
 Tests: 16 new in `test_text_renderer.py`. 13 of the first 14 fail against
 the old renderer. The obstacle test was rewritten until it fails without
-the obstacle term. 388 pass in total.
+the obstacle term.
 
-**Open decision: identity matching (W3.2: "decide after trying the cheap
-version").** Positional matching can't recognise a mirrored composition, so
-2 of 12 golden panels still attribute a line to the wrong character. W3's
-done-when ("every tail on the right character") can't be met without one
-of:
-- (a) **Identity via OpenCV SFace** (`cv2.FaceRecognizerSF`, already in
-  OpenCV 4.11). It needs one ~37 MB ONNX model file, like YuNet. Compare
-  each face crop to the characters' reference faces. It is light, but
-  trained on photos, so how well it handles comic faces is unknown.
-- (b) **Identity via CLIP image embeddings.** Likely more robust on
-  stylised art, but adds torch + open_clip (~2 GB).
-- (c) **Defer identity** and amend done-when to "every tail on the right
-  character, except mirrored compositions", tracked as problem 4.
+**Identity decision (W3.2: "decide after trying the cheap version").** The
+cheap version left 2 of 12 golden panels mirrored. The options were (a)
+OpenCV SFace, (b) CLIP (torch, ~2 GB), and (c) defer identity. **You chose
+(a), 2026-10-30.**
+
+- *Spike.* 22 faces across 9 panels, with identities checked by eye:
+  5 golden panels for tuning and 4 W1-run panels held out.
+
+  | Method | Golden faces | Held-out faces | Panels fully right | Broke a correct panel? |
+  |---|---|---|---|---|
+  | Position only | 9/13 | 6/9 | 6/9 | — |
+  | SFace only | 11/13 | 4/9 | 6/9 | yes (2) |
+  | Blend | 11/13 | 7/9 | **7/9** | **no** |
+
+  SFace's cosine similarities on this art are weak (0.1–0.56; its
+  same-person threshold on photos is 0.363), and plain crops without
+  landmark alignment were near-useless (8/13). So identity is used only
+  blended with position.
+- *Built.* `src/lazycomics/face_identity.py`, plus a blend in
+  `_match_characters_to_faces`. On panels with 2+ characters and a
+  reference image, each pair's score is its SFace cosine minus 0.25 × its
+  distance from the predicted centre (as a fraction of the width).
+  - The weight was chosen on golden, inside the range 0.125–0.45 that keeps
+    correct matches and fixes `page_4_panel_1`, then confirmed on held-out.
+  - With no usable identity evidence it is exactly the position-only
+    matcher, including failing closed.
+  - The layout record notes which was used (`"matching"`).
+- *Model.* Downloaded on first use from the OpenCV Zoo to
+  `src/lazycomics/assets/models/face_recognition_sface_2021dec.onnx`
+  (38.7 MB, gitignored), with SHA-256 pinned (`0ba9fbfa…4e79`). If the
+  download fails, matching uses position only and says so once. To bundle a
+  local copy later, commit that file and remove its `.gitignore` line.
+  - **Found on the first real run:** with `SSLKEYLOGFILE` set (it is in
+    this harness's environment), `ssl.create_default_context()`
+    hard-crashes Windows Python (`OPENSSL_Uplink`). The downloader uses a
+    plain verifying `SSLContext` instead, and sweeps up `.part` files left
+    by a crash.
+- *Result.* Golden `page_4_panel_1` is fixed: David's tail now points at
+  David. Every tail in the golden subset is now on the right character, and
+  held-out results match the spike.
+- **Still wrong:**
+  - Golden `page_2_panel_1`: David's tail-less "EAT IT!" sits beside
+    Gerald, because identity evidence there is too weak to overrule
+    position.
+  - Held-out story `page_4_panel_3`: the Intern has no reference image,
+    and the generator reordered the cast.
+
+  Both are tracked under problem 4.
+
+**Done when → met 2026-10-30** on the golden subset: no reading-order or
+overlap issues, every tail on the right character, and no over-wrapped or
+colliding narrow-panel text. The checks report only the designed
+fail-closed `no_tail` for Gerald, who isn't in `page_4_panel_1`.
+Outstanding:
+- the spec's real-art reading-order check on the next full e2e run, done
+  so far on the 17 W1-run panels;
+- the residual attributions above.
 
 ### W4 — Character + style consistency
 
