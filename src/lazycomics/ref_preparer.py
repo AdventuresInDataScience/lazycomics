@@ -18,7 +18,8 @@ matches the character generated in the base Flux pass. Supporting refs
 follow ``inpaint_order`` so the bridge receives them in generation
 sequence. Both fall back to the original Phase 1 heuristics (first
 char with a ref, original chars: order) when processing older enriched
-JSON that lacks these fields.
+JSON that lacks these fields. Klein has no per-ref weight, so the order
+and count are tunable (``refs.*`` config, see :func:`_order_sources`).
 
 File layout (plan §11):
 
@@ -41,9 +42,17 @@ from typing import Any
 from PIL import Image
 
 from lazycomics.asset_registry import get_style
+from lazycomics.config import cfg_get, load_config
 from lazycomics.models import Project, StyleAsset
 
 __all__ = ["prepare_references"]
+
+
+# Ref ordering knobs (``refs.*`` in lazycomics_config.yaml; W4.3 experiments).
+# Module constants so the shipped config and the parity test stay in lockstep.
+_DEFAULT_CHARACTERS_FIRST = False
+_DEFAULT_CLOSEUP_LOCATION = True
+_DEFAULT_MAX_REFS = None
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +66,7 @@ def prepare_references(
     *,
     force: bool = False,
     working_resolution: int = 1024,
+    config: dict[str, Any] | None = None,
 ) -> dict[str, list[Path]]:
     """Prepare reference images for each enriched panel.
 
@@ -79,9 +89,19 @@ def prepare_references(
         Long-edge cap in pixels for the prepared images (downscale only).
         Defaults to 1024. Wan2GP rescales every ref to the output's pixel
         area anyway, so this sets source quality, not generation cost.
+    config
+        Loaded config dict for the ``refs.*`` ordering knobs; if ``None``,
+        calls ``load_config()`` internally.
     """
+    if config is None:
+        config = load_config()
+    opts = {
+        "characters_first": cfg_get(config, "refs.characters_first", _DEFAULT_CHARACTERS_FIRST),
+        "closeup_location": cfg_get(config, "refs.closeup_location", _DEFAULT_CLOSEUP_LOCATION),
+        "max_refs": cfg_get(config, "refs.max_refs", _DEFAULT_MAX_REFS),
+    }
     style = _try_get_style(project)
-    style_refs = list(style.reference_images) if style else []
+    style_refs = [Path(p) for p in style.reference_images] if style else []
 
     if panels is None:
         panel_ids = sorted(p.stem for p in project.enriched_dir.glob("*.json"))
@@ -103,7 +123,7 @@ def prepare_references(
             continue
 
         panel = json.loads(enriched_path.read_text(encoding="utf-8"))
-        outputs = _prepare_one(project, panel, style_refs, working_resolution)
+        outputs = _prepare_one(project, panel, style_refs, working_resolution, opts)
         if outputs:
             results[panel_id] = outputs
 
@@ -120,35 +140,34 @@ def _prepare_one(
     panel: dict[str, Any],
     style_refs: list[Path],
     working_resolution: int,
+    opts: dict[str, Any],
 ) -> list[Path]:
     panel_id = panel["panel_id"]
 
-    primary_source = _select_primary_source(panel)
-    if primary_source is None:
+    sources = _order_sources(panel, style_refs, opts)
+    if not sources:
         print(f"[refs] {panel_id}: no source images available, skipping")
         return []
 
-    if not primary_source.is_file():
-        print(f"[refs] {panel_id}: primary source missing: {primary_source}")
+    if not sources[0].is_file():
+        print(f"[refs] {panel_id}: primary source missing: {sources[0]}")
         return []
 
-    # Primary: whole image at native aspect, same treatment as supporting.
-    img = _resize_long_edge(Image.open(primary_source), working_resolution)
+    sources = [s for s in sources if s.is_file()]
+    if opts["max_refs"]:
+        sources = sources[: opts["max_refs"]]
 
-    primary_out = project.refs_prepared_dir / f"{panel_id}_ref.png"
-    img.save(primary_out)
-    outputs = [primary_out]
+    # This replaces the whole stack. A leftover _ref_N from a longer one would
+    # still be sent by the bridge, which collects _ref_1, _ref_2 ... until a gap.
+    for stale in project.refs_prepared_dir.glob(f"{panel_id}_ref_*.png"):
+        stale.unlink()
 
-    # Supporting: style refs first, then location + other characters. Klein
-    # has no per-ref weight, so this order is the only ranking signal it gets.
-    supporting_sources = [Path(p) for p in style_refs] + _collect_supporting(panel, primary_source)
-    for idx, src in enumerate(supporting_sources, start=1):
-        if not src.is_file():
-            continue
-        s_img = Image.open(src)
-        s_img = _resize_long_edge(s_img, working_resolution)
-        out_path = project.refs_prepared_dir / f"{panel_id}_ref_{idx}.png"
-        s_img.save(out_path)
+    # Every ref: whole image at native aspect, numbered with no gaps.
+    outputs: list[Path] = []
+    for src in sources:
+        suffix = f"_{len(outputs)}" if outputs else ""
+        out_path = project.refs_prepared_dir / f"{panel_id}_ref{suffix}.png"
+        _resize_long_edge(Image.open(src), working_resolution).save(out_path)
         outputs.append(out_path)
 
     return outputs
@@ -160,6 +179,49 @@ def _prepare_one(
 
 
 _WIDE_SHOT_KEYWORDS = ("wide", "establishing", "establish", "long shot", "bird")
+
+
+def _order_sources(
+    panel: dict[str, Any],
+    style_refs: list[Path],
+    opts: dict[str, Any],
+) -> list[Path]:
+    """Every source for the panel, deduplicated, in the order the bridge sends them.
+
+    Klein has no per-ref weight, so order and count are the only levers
+    (``Docs/PLAN.md`` W4.3). Default: primary (see
+    :func:`_select_primary_source`), style, location, other characters.
+    ``characters_first`` puts every character (primary first) before style
+    and location, wide shots included. ``closeup_location: false`` drops the
+    location ref on close-ups that show a character.
+    """
+    primary = _select_primary_source(panel)
+    if primary is None:
+        return []
+    chars = _character_sources(panel)
+    if opts["characters_first"] and chars:
+        order = chars + style_refs + [Path(p) for p in panel.get("loc_reference_images") or []]
+    else:
+        order = [primary] + style_refs + _collect_supporting(panel, primary)
+    if not opts["closeup_location"] and chars and _is_closeup(panel):
+        locs = {Path(p) for p in panel.get("loc_reference_images") or []}
+        order = [p for p in order if p not in locs]
+    return list(dict.fromkeys(order))
+
+
+def _character_sources(panel: dict[str, Any]) -> list[Path]:
+    """Each character's first ref: ``primary_character``, then ``inpaint_order``."""
+    chars = panel.get("characters") or []
+    first_ref = {c["identifier"]: Path(c["reference_images"][0])
+                 for c in chars if c.get("reference_images")}
+    names = [c["identifier"] for c in chars]
+    order = [panel.get("primary_character"), *(panel.get("inpaint_order") or []), *names]
+    return list(dict.fromkeys(first_ref[n] for n in order if n in first_ref))
+
+
+def _is_closeup(panel: dict[str, Any]) -> bool:
+    """Shot hint says close-up ("closeup", "close-up", "extreme close up" ...)."""
+    return "close" in (panel.get("shot_hint") or "").lower()
 
 
 def _select_primary_source(panel: dict[str, Any]) -> Path | None:

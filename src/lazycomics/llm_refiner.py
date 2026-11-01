@@ -23,6 +23,12 @@ from lazycomics.models import Project
 
 __all__ = ["refine_prompts_with_llm", "DEFAULT_SYSTEM_PROMPT"]
 
+# Per-request timeout. The first request also pays for a local server
+# loading the model from disk, which took over 60s for the first three
+# panels of the 2026-11-01 golden run (gemma4 8B on Ollama), so they were
+# silently left unrefined.
+_TIMEOUT_S = 300
+
 
 DEFAULT_SYSTEM_PROMPT = """\
 You refine image-generation prompts for comic panels. The target is a Flux-family model.
@@ -41,6 +47,12 @@ OUTPUT RULES
   tokens, not English words — do not paraphrase, translate, or replace them.
 - Preserve every factual element: who is in the panel, what they are doing,
   where, camera/shot, mood. Do not change a verb's meaning.
+- Keep each character's appearance description VERBATIM, next to that
+  character: age, hair colour and style, skin tone, ethnicity, build,
+  clothing. Never shorten, paraphrase or drop any of it, even when the panel
+  is a close-up or the description seems long. It is the only way the image
+  model tells the characters apart; losing "young" or "brown hair" changes
+  who gets drawn.
 - Do NOT invent new details (colours, lighting, props, weather, expressions)
   that are not already present in the input.
 - Do NOT add generic quality boilerplate ("highly detailed", "8k",
@@ -48,7 +60,8 @@ OUTPUT RULES
   dilute attention on the meaningful tokens.
 - Keep the subject and action near the start of the prompt — Flux weights
   early tokens more heavily.
-- Aim for under 75 words. Concise prompts perform better with Flux.
+- Keep everything else concise: aim for under 75 words besides the character
+  descriptions.
 - Respond in English.
 
 If the input is empty, output an empty string.
@@ -249,7 +262,7 @@ def _call_llm(endpoint: str, headers: dict[str, str], body: dict[str, Any]) -> s
         ) from e
 
     try:
-        response = requests.post(endpoint, headers=headers, json=body, timeout=60)
+        response = requests.post(endpoint, headers=headers, json=body, timeout=_TIMEOUT_S)
         response.raise_for_status()
         data = response.json()
     except Exception as e:

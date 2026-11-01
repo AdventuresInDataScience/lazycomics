@@ -366,6 +366,11 @@ _DEFAULT_INPAINT_MASKING_STRENGTH = 0.3
 _DEFAULT_INPAINT_MASK_EXPAND = 0
 _DEFAULT_INPAINT_MASK_FEATHER = 0.04
 
+# Normalized Attention Guidance strength. Klein is guidance-distilled (wgp
+# forces guidance_scale to 1), so NAG is the only way the negative prompt
+# reaches the model, and wgp applies it only when NAG_scale > 1. 1 = off.
+_DEFAULT_NAG_SCALE = 1.0
+
 # wgp's settings-format version that our task fields were traced against
 # (WanGP v11.61). A task without it is treated as v0 and run through every
 # legacy migration — one of which (flux_handler.fix_settings, < 2.34) forces
@@ -403,6 +408,7 @@ def _load_bridge_config(config: dict[str, Any]) -> dict[str, Any]:
         "inpaint_masking_strength": cfg_get(config, "wan2gp.inpaint_masking_strength", _DEFAULT_INPAINT_MASKING_STRENGTH),
         "inpaint_mask_expand": cfg_get(config, "wan2gp.inpaint_mask_expand", _DEFAULT_INPAINT_MASK_EXPAND),
         "inpaint_mask_feather": cfg_get(config, "wan2gp.inpaint_mask_feather", _DEFAULT_INPAINT_MASK_FEATHER),
+        "nag_scale": cfg_get(config, "wan2gp.nag_scale", _DEFAULT_NAG_SCALE),
     }
 
 
@@ -444,6 +450,11 @@ def _build_wangp_task(
         "loras_multipliers": loras_multipliers,
         "settings_version": _WAN2GP_SETTINGS_VERSION,
     }
+
+    # guidance_scale is inert on distilled Klein; the negative prompt only
+    # acts through NAG. Omitted at the default so baseline tasks are unchanged.
+    if bridge_cfg.get("nag_scale", _DEFAULT_NAG_SCALE) > 1:
+        task["NAG_scale"] = bridge_cfg["nag_scale"]
 
     # Every ref → image_refs, primary first. Not image_start: wgp discards
     # it unless "S" is in image_prompt_type, which Klein doesn't allow, so a

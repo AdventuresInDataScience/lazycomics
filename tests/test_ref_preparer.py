@@ -424,6 +424,102 @@ def test_supporting_fallback_order_without_inpaint_order(env):
 
 
 # ---------------------------------------------------------------------------
+# Ordering knobs (refs.* config, W4.3)
+# ---------------------------------------------------------------------------
+
+
+_RED, _GREEN, _BLUE, _GREY = (255, 0, 0), (0, 255, 0), (0, 0, 255), (128, 128, 128)
+
+
+def _colours(env, result, panel_id="p1"):
+    """Centre colour of each prepared ref, in stack order."""
+    out = []
+    for path in result[panel_id]:
+        img = Image.open(path).convert("RGB")
+        out.append(img.getpixel((img.size[0] // 2, img.size[1] // 2)))
+    return out
+
+
+def _refs_cfg(**refs):
+    return {"refs": {"characters_first": False, "closeup_location": True,
+                     "max_refs": None, **refs}}
+
+
+def _wide_two_char_panel(env):
+    """Wide shot: by default the location leads; A is primary, B second."""
+    register_style(env.project, prompt_prefix="x",
+                   reference_images=[env.make_src("style.png", 600, 600, _GREY)])
+    env.write_enriched(
+        "p1",
+        shot_hint="wide shot",
+        characters=[_char("A", [env.make_src("a.png", 600, 600, _RED)]),
+                    _char("B", [env.make_src("b.png", 600, 600, _BLUE)])],
+        primary_character="A",
+        inpaint_order=["A", "B"],
+        loc_reference_images=[str(env.make_src("loc.png", 600, 600, _GREEN))],
+    )
+
+
+@_with_env
+def test_default_order_unchanged(env):
+    _wide_two_char_panel(env)
+    result = prepare_references(env.project, config=_refs_cfg())
+    assert _colours(env, result) == [_GREEN, _GREY, _RED, _BLUE]  # loc, style, A, B
+
+
+@_with_env
+def test_characters_first_puts_every_character_before_style_and_location(env):
+    _wide_two_char_panel(env)
+    result = prepare_references(env.project, config=_refs_cfg(characters_first=True))
+    assert _colours(env, result) == [_RED, _BLUE, _GREY, _GREEN]  # A, B, style, loc
+
+
+@_with_env
+def test_closeup_location_false_drops_location_on_closeups_only(env):
+    char = env.make_src("c.png", 600, 600, _RED)
+    loc = env.make_src("loc.png", 600, 600, _GREEN)
+    env.write_enriched("p1", shot_hint="extreme close-up on his eyes",
+                       characters=[_char("A", [char])], loc_reference_images=[str(loc)])
+    env.write_enriched("p2", shot_hint="medium shot",
+                       characters=[_char("A", [char])], loc_reference_images=[str(loc)])
+    result = prepare_references(env.project, config=_refs_cfg(closeup_location=False))
+    assert _colours(env, result, "p1") == [_RED]
+    assert _colours(env, result, "p2") == [_RED, _GREEN]
+
+
+@_with_env
+def test_max_refs_cuts_the_stack_from_the_end(env):
+    _wide_two_char_panel(env)
+    result = prepare_references(env.project, config=_refs_cfg(max_refs=2))
+    assert _colours(env, result) == [_GREEN, _GREY]
+
+
+@_with_env
+def test_shorter_stack_removes_leftover_refs(env):
+    # The bridge sends _ref_1, _ref_2 ... until a gap, so a leftover _ref_3
+    # from a longer stack would still be sent.
+    _wide_two_char_panel(env)
+    prepare_references(env.project, config=_refs_cfg())
+    prepare_references(env.project, force=True, config=_refs_cfg(max_refs=2))
+    names = sorted(p.name for p in env.project.refs_prepared_dir.glob("p1_ref*.png"))
+    assert names == ["p1_ref.png", "p1_ref_1.png"]
+
+
+@_with_env
+def test_missing_supporting_source_leaves_no_gap(env):
+    a = env.make_src("a.png", 600, 600, _RED)
+    b = env.make_src("b.png", 600, 600, _BLUE)
+    env.write_enriched(
+        "p1",
+        characters=[_char("A", [a]), _char("B", [b])],
+        loc_reference_images=[str(env.src_dir / "gone.png")],
+    )
+    result = prepare_references(env.project, config=_refs_cfg())
+    assert [p.name for p in result["p1"]] == ["p1_ref.png", "p1_ref_1.png"]
+    assert _colours(env, result) == [_RED, _BLUE]
+
+
+# ---------------------------------------------------------------------------
 # Skip / force
 # ---------------------------------------------------------------------------
 

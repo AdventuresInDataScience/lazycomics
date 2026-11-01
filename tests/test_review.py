@@ -8,6 +8,7 @@ crash on missing inputs.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import tempfile
@@ -269,6 +270,57 @@ def test_character_sheet_one_row_per_character(env):
     sheet = Image.open(out)
     # Two rows (GERALD with 2 appearances, YUKI with 1), each ~100px tiles + labels.
     assert 2 * 100 < sheet.height < 2 * 220
+
+
+def _match(env, pid, regions):
+    """Record ``regions`` as render_text would, fingerprinted to the panel image."""
+    path = env.project.enriched_dir / f"{pid}.json"
+    data = json.loads(path.read_text())
+    data["actual_character_regions"] = regions
+    data["detected_faces_for"] = hashlib.sha1(
+        (env.project.panels_dir / f"{pid}.png").read_bytes()).hexdigest()
+    path.write_text(json.dumps(data))
+
+
+@_with_env
+def test_appearance_tile_crops_on_the_characters_matched_face(env):
+    gerald = {"identifier": "GERALD"}
+    yuki = {"identifier": "YUKI"}
+    env.panel(P, 1024, 768, aspect=1.33, characters=[gerald, yuki], layout={})
+    _match(env, P, {"GERALD": [100, 100, 200, 200], "YUKI": [700, 300, 750, 350]})
+    # Crop spans 3x the face side across, 3.2x down (see _head_crop); label adds 22px.
+    assert review._appearance_tile(env.project, P, "GERALD", 320).size == (300, 342)
+    assert review._appearance_tile(env.project, P, "YUKI", 320).size == (300, 342)
+
+
+@_with_env
+def test_appearance_tile_ignores_regions_from_another_image(env):
+    env.panel(P, 1024, 768, aspect=1.33,
+              characters=[{"identifier": "GERALD"}, {"identifier": "YUKI"}], layout={})
+    _match(env, P, {"GERALD": [100, 100, 200, 200]})
+    # Panel regenerated since: the recorded face may now be anything.
+    Image.new("RGB", (1024, 768), (1, 2, 3)).save(env.project.panels_dir / f"{P}.png")
+    tile = review._appearance_tile(env.project, P, "GERALD", 240)
+    # The whole 4:3 panel (320 wide at 240 high), not a 225-wide head crop.
+    assert tile.height == 262 and tile.width >= 320
+
+
+@_with_env
+def test_character_sheet_stacks_baseline_crop_under_each_appearance(env):
+    gerald = {"identifier": "GERALD"}
+    env.panel(P, 448, 1024, aspect=0.44, characters=[gerald, {"identifier": "YUKI"}], layout={})
+    _match(env, P, {"GERALD": [100, 100, 200, 200]})
+    other = _Env()
+    try:
+        other.panel(P, 448, 1024, aspect=0.44, characters=[gerald], layout={})
+        _match(other, P, {"GERALD": [100, 100, 200, 200]})
+        alone = Image.open(review.character_sheet(env.project, [P], env.root / "a.png", tile_h=100))
+        paired = Image.open(review.character_sheet(env.project, [P], env.root / "b.png",
+                                                   baseline=other.project, tile_h=100))
+    finally:
+        other.close()
+    # Each appearance tile is now two crops (+ label) high.
+    assert paired.height - alone.height >= 2 * (100 + 22)
 
 
 def test_confident_faces_drops_low_scores():

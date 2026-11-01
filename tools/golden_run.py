@@ -5,7 +5,7 @@ Usage::
 
     python tools/golden_run.py [--out golden_output] [--force] [--no-generate]
                                [--base-resolution N] [--baseline DIR]
-                               [--fresh-prompts]
+                               [--fresh-prompts | --refine] [--set KEY=VALUE ...]
 
 The golden subset is ``tests/fixtures/integration/golden.cbml``: three page
 blocks cut from the e2e story (see ``GOLDEN_PAGES``) with the story's
@@ -27,13 +27,18 @@ Iterating:
   stale panels are reused.
 * ``--no-generate`` never starts Wan2GP: re-letter, re-assemble, re-check.
 * Prompts are the frozen LLM-refined set in
-  ``tests/fixtures/integration/golden_prompts/`` (from the 2026-06-10 e2e
-  run) and the seed is fixed by config, so two runs differ only by what you
-  changed. ``--fresh-prompts`` uses ``build_prompts`` output instead.
+  ``tests/fixtures/integration/golden_prompts/``, and the seed is fixed by
+  config, so two runs differ only by what you changed. ``--fresh-prompts``
+  uses ``build_prompts`` output instead; ``--refine`` also runs it through
+  the LLM refiner, as the full pipeline does. LLM output varies run to run,
+  so to A/B anything else against refined prompts, freeze them first: copy
+  ``<out>/project/prompts/*.txt`` over ``golden_prompts/``.
 * ``--baseline <another --out dir>`` adds that run's lettered panels as a
-  column, for A/B review of an experiment.
-* ``--base-resolution`` overrides ``wan2gp.base_resolution`` (e.g. 768 for a
-  faster loop); combine with ``--force``.
+  column, and its character crops under this run's, for A/B review.
+* ``--set KEY=VALUE`` overrides any config value for this run, e.g.
+  ``--set wan2gp.default_steps=8`` (repeatable; values parse as YAML).
+  ``--base-resolution N`` is shorthand for ``--set wan2gp.base_resolution=N``
+  (e.g. 768 for a faster loop). Combine either with ``--force``.
 """
 
 from __future__ import annotations
@@ -44,6 +49,8 @@ import shutil
 import sys
 import time
 from pathlib import Path
+
+import yaml
 
 REPO = Path(__file__).resolve().parent.parent
 # Allow running straight from a source checkout without installing the package.
@@ -73,20 +80,28 @@ GOLDEN_PAGES = {
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     out = Path(args.out).resolve()
+    # Loaded first so a bad --baseline fails before a 10-minute generation.
+    baseline = lc.load_project(Path(args.baseline).resolve() / "project") if args.baseline else None
 
-    config = load_config(REPO / "lazycomics_config.yaml")
+    config = copy.deepcopy(load_config(REPO / "lazycomics_config.yaml"))
+    overrides = list(args.set)
     if args.base_resolution:
-        config = copy.deepcopy(config)
-        config.setdefault("wan2gp", {})["base_resolution"] = args.base_resolution
+        overrides.append(f"wan2gp.base_resolution={args.base_resolution}")
+    for item in overrides:
+        _override(config, item)
 
     project = _open_project(out / "project")
     panels = sorted((p.panel_id for p in lc.enrich(project, config=config)),
                     key=review.panel_sort_key)
     lc.build_prompts(project)
-    if not args.fresh_prompts:
+    if args.refine:
+        lc.refine_prompts_with_llm(project, panels=panels)
+        if not args.no_generate:
+            _unload_llm(config)
+    elif not args.fresh_prompts:
         for p in FROZEN_PROMPTS.glob("*.txt"):
             shutil.copy2(p, project.prompts_dir / p.name)
-    lc.prepare_references(project, panels=panels, force=True)
+    lc.prepare_references(project, panels=panels, force=True, config=config)
 
     reused = [p for p in panels if (project.panels_dir / f"{p}.png").is_file()]
     gen_s = None
@@ -106,7 +121,6 @@ def main(argv: list[str] | None = None) -> int:
         force=True,
     )
 
-    baseline = lc.load_project(Path(args.baseline).resolve() / "project") if args.baseline else None
     issues = write_sheets(project, out, baseline=baseline)
 
     report = _format_report(panels, issues, gen_s, [] if args.force else reused, args)
@@ -123,8 +137,41 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap.add_argument("--no-generate", action="store_true", help="never start Wan2GP")
     ap.add_argument("--base-resolution", type=int, help="override wan2gp.base_resolution")
     ap.add_argument("--baseline", help="another golden --out dir to compare against")
-    ap.add_argument("--fresh-prompts", action="store_true", help="skip the frozen prompts")
+    prompts = ap.add_mutually_exclusive_group()
+    prompts.add_argument("--fresh-prompts", action="store_true", help="skip the frozen prompts")
+    prompts.add_argument("--refine", action="store_true",
+                         help="fresh prompts refined by the LLM (llm.* config)")
+    ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                    help="override a config value, e.g. wan2gp.default_steps=8 (repeatable)")
     return ap.parse_args(argv)
+
+
+def _override(config: dict, item: str) -> None:
+    """Apply one ``dotted.key=value`` to ``config`` in place (value parsed as YAML)."""
+    key, sep, raw = item.partition("=")
+    if not sep or not key:
+        raise SystemExit(f"--set wants KEY=VALUE, got {item!r}")
+    *parents, leaf = key.split(".")
+    node = config
+    for k in parents:
+        node = node.setdefault(k, {})
+    node[leaf] = yaml.safe_load(raw)
+
+
+def _unload_llm(config: dict) -> None:
+    """Free the refiner's VRAM before Wan2GP starts.
+
+    Ollama keeps a model loaded for 5 minutes after the last request, which
+    would leave Wan2GP short of VRAM and skew the generation time. Uses
+    Ollama's native API; for any other server this just fails harmlessly.
+    """
+    base = cfg_get(config, "llm.url", "").rstrip("/").removesuffix("/v1")
+    try:
+        import requests
+        requests.post(f"{base}/api/generate", timeout=30,
+                      json={"model": cfg_get(config, "llm.model", ""), "keep_alive": 0})
+    except Exception as e:  # noqa: BLE001 — best effort
+        print(f"[golden] couldn't unload the LLM ({e}); generation may be slower")
 
 
 def _open_project(project_dir: Path) -> lc.Project:
@@ -159,8 +206,9 @@ def _open_project(project_dir: Path) -> lc.Project:
 
 def _format_report(panels, issues, gen_s, reused, args) -> str:
     lines = ["golden run: " + time.strftime("%Y-%m-%d %H:%M")]
-    flags = [f"--{k.replace('_', '-')}={v}" for k, v in vars(args).items()
-             if v not in (None, False) and k != "out"]
+    flags = [f"--{k.replace('_', '-')}={item}" for k, v in vars(args).items()
+             if v not in (None, False) and k != "out"
+             for item in (v if isinstance(v, list) else [v])]
     lines.append("flags: " + (" ".join(flags) or "(none)"))
     if gen_s is None:
         lines.append("generation: skipped (--no-generate)")

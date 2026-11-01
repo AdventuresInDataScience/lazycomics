@@ -8,8 +8,8 @@ issues per panel and (b) two contact-sheet PNGs for eyeballing:
 * **pages sheet** — per page, one row per panel: raw | lettered | as placed
   on the page (the slot-cropped part), plus the assembled page alongside, so
   cropping damage is visible at a glance;
-* **characters sheet** — per character, the reference beside every
-  appearance.
+* **characters sheet** — per character, the reference beside a head crop
+  from every appearance (optionally over a baseline run's crops).
 
 ``tools/golden_run.py`` and ``tools/contact_sheet.py`` drive it; nothing
 here touches a GPU.
@@ -35,6 +35,8 @@ without knowing who is who; that's what the sheets are for.
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -256,22 +258,23 @@ def character_sheet(
     panel_ids: list[str],
     out_path: Path,
     *,
+    baseline: Project | None = None,
     tile_h: int = 240,
 ) -> Path:
-    """One row per character: their reference, then every appearance.
+    """One row per character: their reference, then a head crop from every
+    appearance — the W4 consistency yardstick.
 
-    Solo panels contribute a head-and-shoulders crop around the largest
-    confidently-detected face (the closest like-for-like comparison with the
-    reference), or the whole panel when no face is confident. Multi-character
-    panels contribute the whole raw panel, since we can't yet tell which face
-    is whose.
+    Each crop centres on the face ``render_text`` matched to that character
+    (``actual_character_regions``, trusted only while ``detected_faces_for``
+    still matches the panel image). A solo panel with no match falls back to
+    the largest confidently-detected face. Otherwise the whole panel is shown,
+    labelled "not located". With ``baseline`` (another run of the same
+    panels), each crop has that run's crop beneath it for A/B review.
     """
     appearances: dict[str, list[str]] = {}
     refs: dict[str, str | None] = {}
-    cast: dict[str, int] = {}
     for pid in sorted(panel_ids, key=panel_sort_key):
         chars = (_read_json(project.enriched_dir / f"{pid}.json") or {}).get("characters") or []
-        cast[pid] = len(chars)
         for c in chars:
             appearances.setdefault(c["identifier"], []).append(pid)
             refs.setdefault(c["identifier"], (c.get("reference_images") or [None])[0])
@@ -280,20 +283,38 @@ def character_sheet(
     for name in sorted(appearances, key=lambda n: -len(appearances[n])):
         tiles = [_tile(Path(refs[name]) if refs[name] else None, tile_h, "reference")]
         for pid in appearances[name]:
-            panel_png = project.panels_dir / f"{pid}.png"
-            if not panel_png.is_file():
-                tiles.append(_tile(None, tile_h, pid))
-                continue
-            with Image.open(panel_png) as im:
-                img = im.convert("RGB")
-            if cast[pid] == 1:
-                img = _head_crop(img, _confident_faces(img))
-                label = pid
-            else:
-                label = f"{pid} ({cast[pid]} chars)"
-            tiles.append(_label_tile(_fit_h(img, tile_h), label))
-        rows.append(_row(f"{name}   {len(appearances[name])} appearance(s)", tiles, None))
+            tile = _appearance_tile(project, pid, name, tile_h)
+            if baseline is not None:
+                tile = _stack([tile, _appearance_tile(baseline, pid, name, tile_h, "baseline ")],
+                              gap=4)
+            tiles.append(tile)
+        header = f"{name}   {len(appearances[name])} appearance(s)"
+        if baseline is not None:
+            header += "   (top: this run, bottom: baseline)"
+        rows.append(_row(header, tiles, None))
     return _save(_stack(rows, gap=_GAP * 2), out_path)
+
+
+def _appearance_tile(project: Project, pid: str, name: str, h: int, prefix: str = "") -> Image.Image:
+    """Head crop of character ``name`` in panel ``pid`` (see ``character_sheet``)."""
+    enriched = _read_json(project.enriched_dir / f"{pid}.json") or {}
+    cast = len(enriched.get("characters") or [])
+    label = prefix + (pid if cast == 1 else f"{pid} ({cast} chars)")
+    panel_png = project.panels_dir / f"{pid}.png"
+    if not panel_png.is_file():
+        return _tile(None, h, label)
+    data = panel_png.read_bytes()
+    with Image.open(io.BytesIO(data)) as im:
+        img = im.convert("RGB")
+    regions = {}
+    if enriched.get("detected_faces_for") == hashlib.sha1(data).hexdigest():
+        regions = enriched.get("actual_character_regions") or {}
+    faces = [regions[name]] if name in regions else (_confident_faces(img) if cast == 1 else [])
+    if faces:
+        img = _head_crop(img, faces)
+    else:
+        label += " - not located"
+    return _label_tile(_fit_h(img, h), label)
 
 
 def _confident_faces(img: Image.Image) -> list[list[int]]:

@@ -177,6 +177,10 @@ _EXPECTED_KEYS = [
     "assembly.fit_mode",
     # enricher.py
     "enricher.multi_char_strategy",
+    # ref_preparer.py
+    "refs.characters_first",
+    "refs.closeup_location",
+    "refs.max_refs",
     # llm_refiner.py
     "llm.url",
     "llm.model",
@@ -194,6 +198,7 @@ _EXPECTED_KEYS = [
     "wan2gp.inpaint_masking_strength",
     "wan2gp.inpaint_mask_expand",
     "wan2gp.inpaint_mask_feather",
+    "wan2gp.nag_scale",
 ]
 
 
@@ -271,3 +276,14 @@ def test_repo_config_inpaint_defaults_match_module_defaults():
     assert cfg_get(cfg, "wan2gp.inpaint_masking_strength") == wb._DEFAULT_INPAINT_MASKING_STRENGTH
     assert cfg_get(cfg, "wan2gp.inpaint_mask_expand") == wb._DEFAULT_INPAINT_MASK_EXPAND
     assert cfg_get(cfg, "wan2gp.inpaint_mask_feather") == wb._DEFAULT_INPAINT_MASK_FEATHER
+    assert cfg_get(cfg, "wan2gp.nag_scale") == wb._DEFAULT_NAG_SCALE
+
+
+def test_repo_config_refs_defaults_match_module_defaults():
+    """Sample values for ``refs.*`` must equal ref_preparer's fallbacks."""
+    from lazycomics import ref_preparer as rp  # noqa: PLC0415
+
+    cfg = load_config(_REPO_CONFIG)
+    assert cfg_get(cfg, "refs.characters_first") == rp._DEFAULT_CHARACTERS_FIRST
+    assert cfg_get(cfg, "refs.closeup_location") == rp._DEFAULT_CLOSEUP_LOCATION
+    assert cfg_get(cfg, "refs.max_refs") == rp._DEFAULT_MAX_REFS

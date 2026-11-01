@@ -67,6 +67,27 @@ enricher:
 
 
 # ---------------------------------------------------------------------------
+# Reference stacks  (src/lazycomics/ref_preparer.py)
+# ---------------------------------------------------------------------------
+# Each panel gets a stack of reference images: its characters, the style
+# ref, its location. Klein has no per-reference weight, so order and count
+# are the only levers, and each ref costs about one output image's worth of
+# generation time.
+refs:
+  # false: primary first (the primary character's ref, or the location's on
+  # wide/establishing shots), then style, location, other characters.
+  # true: every character first (primary first), then style, then location.
+  characters_first: false
+
+  # Include the location ref on close-ups that show a character. false drops
+  # it, so the close-up is conditioned on the character and style only.
+  closeup_location: true
+
+  # Most refs sent per panel; the stack is cut from the end. null = no cap.
+  max_refs: null
+
+
+# ---------------------------------------------------------------------------
 # LLM-assisted prompt refinement  (src/lazycomics/llm_refiner.py)
 # ---------------------------------------------------------------------------
 # Used only if you call `refine_prompts_with_llm()`. Both `url` and
@@ -126,9 +147,15 @@ wan2gp:
   # Default denoising steps (Klein 9B uses 4 by default).
   default_steps: 4
 
-  # Guidance scale. Klein's sweet spot is 3-4; higher values push the
-  # model away from the reference images.
+  # Guidance scale. IGNORED by Klein: it is guidance-distilled, so Wan2GP
+  # forces this to 1 (flux_main.py). Only matters for a non-distilled
+  # architecture such as Flux Dev (typically 3.5-4.0).
   guidance_scale: 3.5
+
+  # Normalized Attention Guidance. With guidance_scale inert, NAG is the only
+  # way `negative_prompt` (prompts/<id>.neg.txt) reaches Klein, and Wan2GP
+  # applies it only above 1. 1.0 = off; Wan2GP's UI allows 1-20.
+  nag_scale: 1.0
 
   # Klein reference mode. "I" = condition on image_refs (every ref, primary
   # character first) and output exactly `resolution`. Do NOT use "KI": the K
@@ -138,7 +165,7 @@ wan2gp:
   video_prompt_type: I
 
   # Long-edge resolution in pixels. Short edge derived from panel
-  # aspect ratio and snapped to nearest 64.
+  # aspect ratio and snapped to a multiple of 16 (Wan2GP's block size).
   base_resolution: 1024
 
   # Fixed seed for reproducibility. null = random per panel; an integer

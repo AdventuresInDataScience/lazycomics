@@ -10,8 +10,8 @@ nothing) and writes into ``--out`` (default: ``<project_dir>``):
 
 * ``sheet_pages.png``: per page, one row per panel (raw | lettered | as placed
   on the page) with its issues, and the assembled page alongside;
-* ``sheet_characters.png``: each character's reference beside every
-  appearance.
+* ``sheet_characters.png``: each character's reference beside a head crop
+  from every appearance (with ``--baseline``, that run's crop beneath each).
 
 It also prints the per-panel checks from ``lazycomics.review.check_panel``.
 Works on any project, e.g. ``test_e2e_output/e2e/e2e`` after a full e2e
@@ -50,7 +50,8 @@ def write_sheets(
     issues = {pid: review.check_panel(project, pid) for pid in panel_ids}
     review.pages_sheet(project, panel_ids, out_dir / "sheet_pages.png",
                        baseline=baseline, issues=issues)
-    review.character_sheet(project, panel_ids, out_dir / "sheet_characters.png")
+    review.character_sheet(project, panel_ids, out_dir / "sheet_characters.png",
+                           baseline=baseline)
     return issues
 
 

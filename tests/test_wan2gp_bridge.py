@@ -368,6 +368,21 @@ def test_task_empty_negative_prompt_still_present():
     assert task["negative_prompt"] == ""
 
 
+def test_task_nag_omitted_by_default():
+    # Default tasks must stay byte-identical so golden runs remain comparable.
+    cfg = _load_bridge_config(_base_config())
+    assert "NAG_scale" not in _build_wangp_task({}, "x", "", [], "1024x1024", cfg)
+
+
+def test_task_nag_scale_sent_above_one():
+    # wgp only applies NAG (the negative prompt's sole route into distilled
+    # Klein) when NAG_scale > 1.
+    raw = _base_config()
+    raw["wan2gp"]["nag_scale"] = 3
+    cfg = _load_bridge_config(raw)
+    assert _build_wangp_task({}, "x", "", [], "1024x1024", cfg)["NAG_scale"] == 3
+
+
 # ---------------------------------------------------------------------------
 # _build_queue_zip
 # ---------------------------------------------------------------------------
