@@ -16,8 +16,9 @@ layer.
 ## Status
 
 The full pipeline runs end-to-end: CBML → Wan2GP-generated panels (Flux 2
-Klein) → lettered pages → `.cbz`. Output quality is the current focus
-(character consistency, bubble layout). LoRA training is not built yet.
+Klein) → lettered pages → `.cbz`. Characters stay consistent across the test
+story's 33 panels. Next: LoRA training (not built yet), then lettering and
+generation polish.
 
 See [`Docs/PLAN.md`](Docs/PLAN.md) for what works, what doesn't, and
 what's next.
@@ -136,6 +137,39 @@ projects/my_comic/
 ├── pages_upscaled/      # Real-ESRGAN output (Phase 2)
 └── output/              # final .cbz lives here
 ```
+
+## Development
+
+```
+tests/
+├── test_*.py                 unit tests: fast, no GPU
+└── e2e/                      the real pipeline (Wan2GP, Ollama): needs the GPU
+    ├── test_integration_e2e.py   full story → .cbz, with checks
+    ├── test_wan2gp_live*.py      1- and 2-panel bridge smoke tests
+    ├── fixtures/                 the test comic:
+    │   ├── story.cbml            full story (33 panels), used by the e2e test
+    │   ├── golden.cbml           12-panel subset, used by tools/golden_run.py
+    │   ├── <NAME>.txt / .png     character, location and style descriptions + refs
+    │   └── golden_prompts/       frozen prompts, so golden runs are comparable
+    ├── outputs/                  gitignored; each run replaces its own folder
+    │   ├── e2e/                  test_integration_e2e.py's project
+    │   ├── golden/<name>/        tools/golden_run.py --out <name>
+    │   └── live/, live_queue/    the smoke tests
+    └── archived_test_outputs/    gitignored; old runs kept on purpose, date-prefixed
+tools/                        golden_run.py, contact_sheet.py, profile_architectures.py
+```
+
+```bash
+pytest tests --ignore=tests/e2e                     # unit tests, ~1 min
+python tests/e2e/test_wan2gp_live_queue.py          # bridge smoke test, minutes
+python tools/golden_run.py --force --out NAME --baseline w4_prompts   # golden subset, ~10 min
+pytest tests/e2e/test_integration_e2e.py -v -s      # full e2e, 30+ min
+python tools/contact_sheet.py tests/e2e/outputs/e2e # sheets + checks for any project
+```
+
+To keep a run, move its folder into `tests/e2e/archived_test_outputs/`
+(date-prefixed) before re-running. Which check to run for which change:
+[`Docs/PLAN.md`](Docs/PLAN.md), "Verifying a change".
 
 ## License
 

@@ -13,8 +13,9 @@ Pipeline position::
     panels/<panel_id>.png
 
 The bridge reads enriched JSON, prompts, and prepared refs, builds a
-Wan2GP queue.zip, shells out to ``wgp.py --process``, and copies the
-generated images back to ``panels/``.
+Wan2GP queue.zip, shells out to ``wgp.py --process``, and collects each
+panel's image by name into ``panels/``, re-encoded as PNG with wgp's
+recorded settings kept in its ``comment`` chunk.
 
 Configuration
 ~~~~~~~~~~~~~
@@ -165,9 +166,13 @@ def generate_panels(
             wgp_output = tmp / "output"
             wgp_output.mkdir()
             _build_queue_zip(single_tasks, queue_path)
-            _run_wangp(queue_path, wgp_output, bridge_cfg)
-            requested = {pid: t["resolution"] for pid, t in zip(single_ids, single_tasks)}
-            results.update(_collect_outputs(wgp_output, single_ids, project, requested))
+            try:
+                _run_wangp(queue_path, wgp_output, bridge_cfg)
+            finally:
+                # Outputs are named per panel, so the panels that did finish
+                # are kept even when a later task fails and wgp exits non-zero.
+                requested = {pid: t["resolution"] for pid, t in zip(single_ids, single_tasks)}
+                results.update(_collect_outputs(wgp_output, single_ids, project, requested))
 
     # --- Sequential: each multi-inpaint panel runs base + N inpaint passes ---
     for pid, panel in multi_panels:
@@ -215,6 +220,7 @@ def _build_panel_task(
         bridge_cfg=bridge_cfg,
         activated_loras=lora_names,
         loras_multipliers=lora_mults,
+        output_name=pid,
     )
 
 
@@ -308,6 +314,7 @@ def _run_multi_inpaint(
             bridge_cfg=bridge_cfg,
             activated_loras=char_loras,
             loras_multipliers=char_mults,
+            output_name=pid,
         )
 
         result = _run_single_task_and_collect(
@@ -426,6 +433,7 @@ def _build_wangp_task(
     bridge_cfg: dict[str, Any],
     activated_loras: list[str] | None = None,
     loras_multipliers: str = "",
+    output_name: str = "",
 ) -> dict[str, Any]:
     """Construct one Wan2GP settings dict for a single panel.
 
@@ -434,7 +442,11 @@ def _build_wangp_task(
 
     Field names verified against an exported ``flux2_klein_9b`` settings
     JSON from Wan2GP v11.61; field *behaviour* traced in that version's
-    ``wgp.py`` (see ``Docs/PLAN.md`` W1).
+    ``wgp.py`` (see ``Docs/PLAN.md``, "Wan2GP v11.61 with Klein").
+
+    ``output_name`` (the panel ID) becomes the output file's name, so
+    :func:`_collect_outputs` can find each panel by name; ``""`` leaves
+    wgp's own ``<time>_seed<n>_<prompt>`` naming.
     """
     task: dict[str, Any] = {
         "model_type": bridge_cfg["architecture"],
@@ -455,6 +467,11 @@ def _build_wangp_task(
     # acts through NAG. Omitted at the default so baseline tasks are unchanged.
     if bridge_cfg.get("nag_scale", _DEFAULT_NAG_SCALE) > 1:
         task["NAG_scale"] = bridge_cfg["nag_scale"]
+
+    # wgp uses it as the file's stem (plus its own extension) and adds a
+    # "(2)" suffix rather than overwrite (wgp.py:7037-7041).
+    if output_name:
+        task["output_filename"] = output_name
 
     # Every ref → image_refs, primary first. Not image_start: wgp discards
     # it unless "S" is in image_prompt_type, which Klein doesn't allow, so a
@@ -481,20 +498,21 @@ def _build_inpaint_task(
     bridge_cfg: dict[str, Any],
     activated_loras: list[str] | None = None,
     loras_multipliers: str = "",
+    output_name: str = "",
 ) -> dict[str, Any]:
     """Construct a Wan2GP inpaint settings dict.
 
     Differences from image gen: ``image_mode: 2``,
     ``video_prompt_type: "VAG"``, source in ``image_guide``,
     mask in ``image_mask``, plus ``denoising_strength`` and
-    ``masking_strength``.
+    ``masking_strength``. ``output_name`` as for :func:`_build_wangp_task`.
 
     The field names follow Wan2GP's ``ATTACHMENT_KEYS`` (wgp.py:142).
     Using ``image_start``/``image_end`` here causes Wan2GP to reject the
     task with "You must provide a Control Image" because ``V`` in
     ``video_prompt_type`` requires ``image_guide``.
     """
-    return {
+    task = {
         "model_type": bridge_cfg["architecture"],
         "image_mode": 2,
         "prompt": prompt,
@@ -513,6 +531,9 @@ def _build_inpaint_task(
         "activated_loras": activated_loras or [],
         "loras_multipliers": loras_multipliers,
     }
+    if output_name:
+        task["output_filename"] = output_name
+    return task
 
 
 # ---------------------------------------------------------------------------
@@ -892,39 +913,70 @@ def _collect_outputs(
     project: Project,
     resolutions: dict[str, str] | None = None,
 ) -> dict[str, Path]:
-    """Move generated images from Wan2GP output dir to ``panels/``.
+    """Save each panel's generated image as ``panels/<panel_id>.png``.
 
-    Wan2GP writes outputs sequentially (task order matches panel_ids
-    order). We glob for image files, sort them, and pair with panel_ids
-    positionally. If the count doesn't match, we log and pair what we can.
+    Every task names its output after its panel ID (``output_filename``),
+    so outputs are matched by name. Pairing by sorted position went wrong
+    whenever a task was skipped: wgp skips a task that fails validation and
+    still exits 0, which shifted every later panel by one. A panel with no
+    output is reported and left out.
 
-    ``resolutions`` maps panel ID → the requested ``"WxH"``; each collected
-    panel is checked against it (:func:`_warn_on_size_mismatch`).
+    wgp writes JPEG by default; each image is re-encoded as a real PNG
+    (:func:`_save_as_png`). ``resolutions`` maps panel ID → the requested
+    ``"WxH"``; each collected panel is checked against it
+    (:func:`_warn_on_size_mismatch`).
 
     Wan2GP extracts queue contents into ``output/_loaded_queue_cache/``
-    (wgp.py:1535) — we must skip that directory, otherwise the input
-    images get paired as if they were generated outputs.
+    (wgp.py:1535) — that directory holds our input refs, not outputs.
     """
-    output_images = sorted(
-        p for p in wgp_output_dir.rglob("*")
+    outputs = {
+        p.stem: p for p in wgp_output_dir.rglob("*")
         if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
         and p.is_file()
         and "_loaded_queue_cache" not in p.parts
-    )
-
-    if len(output_images) != len(panel_ids):
-        print(
-            f"[wan2gp] WARNING: expected {len(panel_ids)} images, "
-            f"found {len(output_images)} in output dir"
-        )
+    }
 
     results: dict[str, Path] = {}
-    for pid, src in zip(panel_ids, output_images):
+    for pid in panel_ids:
+        src = outputs.get(pid)
+        if src is None:
+            print(f"[wan2gp] WARNING: no output for {pid}; Wan2GP skipped or "
+                  f"failed its task (see its log above)", flush=True)
+            continue
         dst = project.panels_dir / f"{pid}.png"
-        shutil.copy2(src, dst)
+        _save_as_png(src, dst)
         results[pid] = dst
         print(f"[wan2gp] {pid} -> {dst.name}")
         if resolutions and pid in resolutions:
             _warn_on_size_mismatch(dst, resolutions[pid], pid)
 
     return results
+
+
+def _save_as_png(src: Path, dst: Path) -> None:
+    """Re-encode one wgp output as a PNG, keeping the settings wgp recorded.
+
+    wgp stores the settings it actually ran with as JSON: in the EXIF
+    UserComment for JPEG/WebP, in an iTXt ``comment`` chunk for PNG. The PNG
+    written here uses the PNG form, so wgp can still read it back.
+    """
+    from PIL import Image, PngImagePlugin
+
+    with Image.open(src) as im:
+        settings = im.info.get("comment")  # str for PNG; a JPEG COM marker is bytes
+        user_comment = im.getexif().get_ifd(0x8769).get(0x9286)  # Exif IFD, UserComment
+        if user_comment:
+            settings = _decode_user_comment(user_comment)
+        info = PngImagePlugin.PngInfo()
+        if isinstance(settings, str) and settings:
+            info.add_itxt("comment", settings)
+        im.save(dst, "PNG", pnginfo=info)
+
+
+def _decode_user_comment(raw: bytes) -> str:
+    """EXIF UserComment → text: an 8-byte charset tag, then the payload."""
+    if raw.startswith(b"UNICODE\0"):
+        return raw[8:].decode("utf-16le", "ignore")
+    if raw.startswith(b"ASCII\0\0\0"):
+        return raw[8:].decode("ascii", "ignore")
+    return raw.decode("utf-8", "ignore")

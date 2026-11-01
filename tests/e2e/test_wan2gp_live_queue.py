@@ -2,10 +2,10 @@
 
 Usage (from the repo root, with your lazycomics venv active):
 
-    python tests/test_wan2gp_live_queue.py
+    python tests/e2e/test_wan2gp_live_queue.py
 
 What it does:
-    1. Creates a throwaway project in ./test_live_output/
+    1. Creates a throwaway project in tests/e2e/outputs/live_queue/
     2. Writes TWO enriched panel JSONs + TWO prompt text files
     3. Calls generate_panels() against your real Pinokio Wan2GP
     4. Prints the output paths so you can visually inspect the PNGs
@@ -23,7 +23,7 @@ import shutil
 import sys
 from pathlib import Path
 
-SRC = Path(__file__).parent.parent / "src"
+SRC = Path(__file__).parents[2] / "src"
 sys.path.insert(0, str(SRC))
 
 from lazycomics.config import load_config
@@ -32,7 +32,7 @@ from lazycomics.wan2gp_bridge import generate_panels
 
 
 def main():
-    output_root = Path("./test_live_output_queue")
+    output_root = Path(__file__).parent / "outputs" / "live_queue"
 
     # Clean previous run
     if output_root.exists():
@@ -130,10 +130,21 @@ def main():
             print(f"Panel 1: {out1}")
             print(f"Panel 2: {out2}")
         else:
+            # Outputs are collected by name, so a missing panel here can
+            # also mean wgp ignored the task's output_filename.
             print("FAILED — Not all output panels exist.")
             if not out1.is_file(): print(f"Missing: {out1}")
             if not out2.is_file(): print(f"Missing: {out2}")
             sys.exit(1)
+
+        from PIL import Image
+        for out in (out1, out2):
+            with Image.open(out) as im:
+                if im.format != "PNG" or "comment" not in im.text:
+                    print(f"FAILED — {out.name}: format {im.format}, "
+                          f"wgp settings {'kept' if 'comment' in getattr(im, 'text', {}) else 'missing'}")
+                    sys.exit(1)
+        print("Both are real PNGs carrying wgp's settings.")
         print("=" * 60)
         
     except Exception as e:

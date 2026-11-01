@@ -2,10 +2,10 @@
 
 Usage (from the repo root, with your lazycomics venv active):
 
-    python tests/test_wan2gp_live.py
+    python tests/e2e/test_wan2gp_live.py
 
 What it does:
-    1. Creates a throwaway project in ./test_live_output/
+    1. Creates a throwaway project in tests/e2e/outputs/live/
     2. Writes one enriched panel JSON + one prompt text file
     3. Calls generate_panels() against your real Pinokio Wan2GP
     4. Prints the output path so you can visually inspect the PNG
@@ -16,7 +16,7 @@ Prerequisites:
     - Pinokio is NOT actively running Wan2GP (avoids GPU contention)
 
 Takes ~30-60s depending on your GPU. The output lands in:
-    ./test_live_output/panels/page_1_panel_1.png
+    tests/e2e/outputs/live/live_test/panels/page_1_panel_1.png
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ import shutil
 import sys
 from pathlib import Path
 
-SRC = Path(__file__).parent.parent / "src"
+SRC = Path(__file__).parents[2] / "src"
 sys.path.insert(0, str(SRC))
 
 from lazycomics.config import load_config
@@ -35,7 +35,7 @@ from lazycomics.wan2gp_bridge import generate_panels
 
 
 def main():
-    output_root = Path("./test_live_output")
+    output_root = Path(__file__).parent / "outputs" / "live"
 
     # Clean previous run
     if output_root.exists():

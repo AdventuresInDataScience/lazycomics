@@ -357,7 +357,8 @@ _AMBIGUOUS_FRAC = 0.05
 # Identity blend: score = SFace cosine - this x |face - predicted centre| / W.
 # Chosen on the golden panels (keeping their correct matches needs > 0.125;
 # fixing the mirrored page_4_panel_1 needs < 0.45), then checked on four
-# held-out W1 panels: no correct match broken (Docs/PLAN.md W3.2).
+# held-out W1 panels: no correct match broken (W3.2 in
+# Docs/archive/2026-11-01_PLAN_W0-W4.md).
 _IDENTITY_POSITION_WEIGHT = 0.25
 _BUBBLE_GAP = 14
 

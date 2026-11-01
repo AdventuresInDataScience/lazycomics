@@ -216,10 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-test_live_output/
-test_live_output_queue/
-test_e2e_output/
-golden_output/
-golden_*/
+
+# Real-pipeline runs (tests/e2e/): live outputs, and old runs kept on purpose.
+tests/e2e/outputs/
+tests/e2e/archived_test_outputs/
 # Downloaded on first use by lazycomics.face_identity (see that module).
 src/lazycomics/assets/models/face_recognition_sface_2021dec.onnx

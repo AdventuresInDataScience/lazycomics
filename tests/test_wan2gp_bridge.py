@@ -29,6 +29,7 @@ from lazycomics.wan2gp_bridge import (  # noqa: E402
     _collect_loras,
     _collect_outputs,
     _collect_refs,
+    _decode_user_comment,
     _compute_resolution,
     _ensure_lora,
     _generate_mask,
@@ -103,6 +104,45 @@ def _with_env(fn):
             env.close()
     wrapper.__name__ = fn.__name__
     return wrapper
+
+
+def _wgp_jpeg(path: Path, colour=(200, 0, 0), size=(64, 96), settings=None):
+    """Write an image the way wgp does: JPEG, settings JSON in the EXIF UserComment."""
+    from PIL import Image
+    exif = Image.Exif()
+    if settings is not None:
+        exif.get_ifd(0x8769)[0x9286] = b"ASCII\0\0\0" + json.dumps(settings).encode()
+    Image.new("RGB", size, colour).save(path, "JPEG", quality=95, exif=exif)
+
+
+def _fake_wgp(*, skip=(), returncode=0, log=None):
+    """A ``subprocess.run`` stand-in that behaves like ``wgp.py --process``.
+
+    Reads the queue zip and, for every task not in ``skip`` (0-based), writes
+    ``<output_filename>.jpg`` into ``--output-dir``. The colour encodes the
+    task's position (red channel 10, 20, ...) so a test can see which task
+    a panel came from. ``log`` (a list) records each call's tasks.
+    """
+    def run(cmd, cwd, **kwargs):
+        out_dir = Path(cmd[cmd.index("--output-dir") + 1])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(cmd[cmd.index("--process") + 1]) as zf:
+            tasks = [t["params"] for t in json.loads(zf.read("queue.json"))]
+        if log is not None:
+            log.append(tasks)
+        for i, task in enumerate(tasks):
+            if i not in skip:
+                _wgp_jpeg(out_dir / f"{task['output_filename']}.jpg", colour=(10 * (i + 1), 0, 0),
+                          settings={"seed": task["seed"], "prompt": task["prompt"]})
+        return mock.Mock(returncode=returncode)
+    return run
+
+
+def _red(path: Path) -> int:
+    """Red channel at the centre (JPEG round-trips colours to within a few levels)."""
+    from PIL import Image
+    with Image.open(path) as im:
+        return im.convert("RGB").getpixel((im.width // 2, im.height // 2))[0]
 
 
 def _base_config():
@@ -368,6 +408,14 @@ def test_task_empty_negative_prompt_still_present():
     assert task["negative_prompt"] == ""
 
 
+def test_task_output_filename_is_the_panel_id():
+    cfg = _load_bridge_config(_base_config())
+    assert _build_wangp_task({}, "x", "", [], "1024x1024", cfg,
+                             output_name="page_1_panel_1")["output_filename"] == "page_1_panel_1"
+    # Unnamed: wgp falls back to its own <time>_seed<n>_<prompt> naming.
+    assert "output_filename" not in _build_wangp_task({}, "x", "", [], "1024x1024", cfg)
+
+
 def test_task_nag_omitted_by_default():
     # Default tasks must stay byte-identical so golden runs remain comparable.
     cfg = _load_bridge_config(_base_config())
@@ -448,34 +496,70 @@ def test_queue_zip_multiple_tasks():
 
 
 @_with_env
-def test_collect_outputs_copies_and_renames(env):
+def test_collect_outputs_pairs_by_name_not_position(env):
     env.project.panels_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as out_dir:
         out_dir = Path(out_dir)
-        # Simulate Wan2GP output — two numbered images
-        (out_dir / "00001.png").write_bytes(b"img1")
-        (out_dir / "00002.png").write_bytes(b"img2")
+        # Sorted by name, "page_1_panel_10" comes before "page_1_panel_2".
+        _wgp_jpeg(out_dir / "page_1_panel_2.jpg", colour=(200, 0, 0))
+        _wgp_jpeg(out_dir / "page_1_panel_10.jpg", colour=(0, 0, 200))
 
-        results = _collect_outputs(out_dir, ["p1", "p2"], env.project)
+        results = _collect_outputs(out_dir, ["page_1_panel_2", "page_1_panel_10"], env.project)
 
-        assert "p1" in results
-        assert "p2" in results
-        assert (env.project.panels_dir / "p1.png").read_bytes() == b"img1"
-        assert (env.project.panels_dir / "p2.png").read_bytes() == b"img2"
+        assert set(results) == {"page_1_panel_2", "page_1_panel_10"}
+        assert _red(env.project.panels_dir / "page_1_panel_2.png") > 150
+        assert _red(env.project.panels_dir / "page_1_panel_10.png") < 50
 
 
 @_with_env
-def test_collect_outputs_handles_count_mismatch(env):
+def test_collect_outputs_skipped_task_shifts_nothing(env):
+    # wgp skips a task that fails validation and still exits 0. Positional
+    # pairing then gave p1 the image generated for p2.
+    import io
+    from contextlib import redirect_stdout
     env.project.panels_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as out_dir:
         out_dir = Path(out_dir)
-        # Only one image for two panel IDs
-        (out_dir / "00001.png").write_bytes(b"img1")
+        _wgp_jpeg(out_dir / "p2.jpg", colour=(0, 0, 200))
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            results = _collect_outputs(out_dir, ["p1", "p2"], env.project)
 
-        results = _collect_outputs(out_dir, ["p1", "p2"], env.project)
-        # Should pair what it can
-        assert "p1" in results
-        assert "p2" not in results
+        assert set(results) == {"p2"}
+        assert not (env.project.panels_dir / "p1.png").exists()
+        assert "WARNING: no output for p1" in buf.getvalue()
+
+
+@_with_env
+def test_collect_outputs_ignores_the_queue_cache(env):
+    env.project.panels_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as out_dir:
+        out_dir = Path(out_dir)
+        (out_dir / "_loaded_queue_cache").mkdir()
+        _wgp_jpeg(out_dir / "_loaded_queue_cache" / "p1.jpg")  # an input, not an output
+        assert _collect_outputs(out_dir, ["p1"], env.project) == {}
+
+
+@_with_env
+def test_collect_outputs_writes_real_png_keeping_wgp_settings(env):
+    from PIL import Image
+    env.project.panels_dir.mkdir(parents=True, exist_ok=True)
+    settings = {"seed": 42, "NAG_scale": 3, "prompt": "a café"}
+    with tempfile.TemporaryDirectory() as out_dir:
+        out_dir = Path(out_dir)
+        _wgp_jpeg(out_dir / "p1.jpg", settings=settings)
+        _collect_outputs(out_dir, ["p1"], env.project)
+
+    dst = env.project.panels_dir / "p1.png"
+    assert dst.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    with Image.open(dst) as im:
+        # wgp's own PNG convention (read_image_metadata reads im.text["comment"]).
+        assert json.loads(im.text["comment"]) == settings
+
+
+def test_decode_user_comment_handles_both_charset_tags():
+    assert _decode_user_comment(b"ASCII\0\0\0{}") == "{}"
+    assert _decode_user_comment(b"UNICODE\0" + '{"p": "café"}'.encode("utf-16le")) == '{"p": "café"}'
 
 
 @_with_env
@@ -485,8 +569,8 @@ def test_collect_outputs_warns_when_output_size_wrong(env):
     env.project.panels_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as out_dir:
         out_dir = Path(out_dir)
-        _write_img(out_dir / "00001.png", 784, 576)
-        _write_img(out_dir / "00002.png", 448, 1024)
+        _write_img(out_dir / "p1.png", 784, 576)
+        _write_img(out_dir / "p2.png", 448, 1024)
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -522,18 +606,40 @@ def test_generate_panels_force_regenerates(env):
     env.write_ref("p1")
     env.write_panel("p1")
 
-    def fake_run(cmd, cwd, **kwargs):
-        # Simulate Wan2GP writing one output image
-        out_dir = cmd[cmd.index("--output-dir") + 1]
-        Path(out_dir).mkdir(parents=True, exist_ok=True)
-        (Path(out_dir) / "00001.png").write_bytes(b"regenerated")
-        return mock.Mock(returncode=0)
-
-    with mock.patch("lazycomics.wan2gp_bridge.subprocess.run", side_effect=fake_run):
+    with mock.patch("lazycomics.wan2gp_bridge.subprocess.run", side_effect=_fake_wgp()):
         results = generate_panels(env.project, force=True, config=_base_config())
 
     assert "p1" in results
-    assert (env.project.panels_dir / "p1.png").read_bytes() == b"regenerated"
+    assert (env.project.panels_dir / "p1.png").read_bytes()[:4] == b"\x89PNG"
+
+
+@_with_env
+def test_generate_panels_names_each_task_after_its_panel(env):
+    for pid in ("page_1_panel_1", "page_1_panel_2"):
+        env.write_enriched(pid)
+        env.write_prompt(pid, f"prompt for {pid}")
+    log = []
+    with mock.patch("lazycomics.wan2gp_bridge.subprocess.run", side_effect=_fake_wgp(log=log)):
+        generate_panels(env.project, force=True, config=_base_config())
+    assert [t["output_filename"] for t in log[0]] == ["page_1_panel_1", "page_1_panel_2"]
+
+
+@_with_env
+def test_generate_panels_keeps_finished_panels_when_wgp_fails(env):
+    # A runtime error in one task makes wgp exit 1. The panels that did
+    # finish are named, so they're kept rather than lost with the temp dir.
+    for pid in ("p1", "p2"):
+        env.write_enriched(pid)
+        env.write_prompt(pid, "x")
+    with mock.patch("lazycomics.wan2gp_bridge.subprocess.run",
+                    side_effect=_fake_wgp(skip={1}, returncode=1)):
+        try:
+            generate_panels(env.project, force=True, config=_base_config())
+            assert False, "should have raised"
+        except RuntimeError as e:
+            assert "exited with code 1" in str(e)
+    assert (env.project.panels_dir / "p1.png").is_file()
+    assert not (env.project.panels_dir / "p2.png").exists()
 
 
 @_with_env
@@ -804,25 +910,16 @@ def test_multi_inpaint_runs_base_plus_inpaint(env):
     )
     env.write_prompt("p1", "two characters in a standoff")
 
-    call_count = [0]
-
-    def fake_run(cmd, cwd, **kwargs):
-        call_count[0] += 1
-        od = cmd[cmd.index("--output-dir") + 1]
-        Path(od).mkdir(parents=True, exist_ok=True)
-        (Path(od) / "00001.png").write_bytes(
-            b"pass_" + str(call_count[0]).encode()
-        )
-        return mock.Mock(returncode=0)
-
+    log = []
     with mock.patch("lazycomics.wan2gp_bridge.subprocess.run",
-                    side_effect=fake_run):
+                    side_effect=_fake_wgp(log=log)):
         results = generate_panels(env.project, force=True,
                                   config=_base_config())
 
     assert "p1" in results
-    assert call_count[0] == 2  # base + 1 inpaint
-    assert (env.project.panels_dir / "p1.png").read_bytes() == b"pass_2"
+    assert len(log) == 2  # base + 1 inpaint
+    assert log[1][0]["image_mode"] == 2 and log[1][0]["output_filename"] == "p1"
+    assert (env.project.panels_dir / "p1.png").is_file()
 
 
 @_with_env
@@ -849,16 +946,8 @@ def test_single_and_multi_panels_in_same_run(env):
     env.write_prompt("m1", "two chars")
 
     calls = []
-
-    def fake_run(cmd, cwd, **kwargs):
-        calls.append(cmd)
-        od = cmd[cmd.index("--output-dir") + 1]
-        Path(od).mkdir(parents=True, exist_ok=True)
-        (Path(od) / "00001.png").write_bytes(b"img")
-        return mock.Mock(returncode=0)
-
     with mock.patch("lazycomics.wan2gp_bridge.subprocess.run",
-                    side_effect=fake_run):
+                    side_effect=_fake_wgp(log=calls)):
         results = generate_panels(env.project, force=True,
                                   config=_base_config())
 

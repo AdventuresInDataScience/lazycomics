@@ -2,11 +2,12 @@
 
 Used by ``text_renderer`` to nudge character→face matching when the
 generator drew characters in a different left-to-right order than the
-enricher predicted (Docs/PLAN.md W3.2). SFace is trained on photos, so on
-comic art its similarities are weak — cosine ~0.1–0.55, mostly under its own
-0.363 same-person threshold — and it's only ever used as evidence blended
-with the positional prior, never on its own (alone it scored 4/9 on held-out
-panels; blended, it fixed a mirrored panel and broke none of 9).
+enricher predicted (W3.2 in Docs/archive/2026-11-01_PLAN_W0-W4.md). SFace is
+trained on photos, so on comic art its similarities are weak — cosine
+~0.1–0.55, mostly under its own 0.363 same-person threshold — and it's only
+ever used as evidence blended with the positional prior, never on its own
+(alone it scored 4/9 on held-out panels; blended, it fixed a mirrored panel
+and broke none of 9).
 
 The model (~37 MB) isn't committed: :func:`ensure_model` downloads it from
 the OpenCV Zoo on first use into ``assets/models/`` and checks its SHA-256.

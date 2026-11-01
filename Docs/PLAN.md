@@ -1,447 +1,139 @@
 # lazycomics — plan
 
-_Started 2026-10-30. Supersedes everything in [`archive/`](archive/README.md)._
+_Restarted 2026-11-01, after W0–W4 closed. Their full as-built record
+(designs, measurements, decisions, spike data) is in
+[`archive/2026-11-01_PLAN_W0-W4.md`](archive/2026-11-01_PLAN_W0-W4.md)._
 
-**How this doc works.** Status lives only in the two tables directly below:
-workstreams, then problems. When a workstream closes, delete its section (git
-history keeps it) and update the tables. Don't annotate sections with
-"RESOLVED" notes. A claim only counts as verified when it has been checked
-against pixels from a real Wan2GP run, not just unit tests. The old plan
-marked things resolved on unit-test evidence alone, and two of those claims
-turned out to be wrong.
+**How this doc works.** Status lives only in the two tables below:
+workstreams, then open problems. When a workstream closes, delete its section
+(git history and the archive keep it) and update the tables. Don't annotate
+sections with "RESOLVED" notes. A claim only counts as verified when it has
+been checked against pixels from a real Wan2GP run, not just unit tests.
 
 | Workstream | Status |
 |---|---|
-| W0 Housekeeping | **Done** 2026-10-30: `test_e2e_output/` and `golden_output/` gitignored and untracked; stray script and logs removed; README and example updated. |
-| W1 Generation contract | **Landed; pending a full e2e run.** Verified on 17 panels (problems 1, 2). One small item remains (see W1); config honesty was done under W4. |
-| W2 Verification loop | **Done and accepted** 2026-10-30. `tools/golden_run.py` regenerates the 12-panel golden subset in one command (582s from scratch, misses the <8 min target); the no-GPU loop takes 10s. See W2. |
-| W3 Bubble layout | **Done 2026-10-30, pending your review.** Done-when met on the golden subset (order, tails, narrow text). Identity matching (OpenCV SFace, option a) is blended with position and downloads its model on first use. Residual: one tail-less shout and one held-out panel still mis-attributed (problem 4). See W3. |
-| W4 Consistency | **Bar met on the golden subset 2026-11-01, pending your review.** Rung 2 (prompt wording) did it: every recurring character on-model in every panel they're drawn in (problem 5). The held-out check needs the full e2e run. Rungs 3–4 are built as config flags but not run. See W4. |
-| W5–W6 | Not started. |
+| W0 Housekeeping | **Done** 2026-10-30. |
+| W1 Generation contract | **Done, verified** 2026-11-01 by the full e2e. Panels come out at the requested shape, every reference image reaches Klein, and outputs are collected by name as real PNGs. |
+| W2 Verification loop | **Done** 2026-10-30: `tools/golden_run.py` (12-panel golden subset, ~10 min) and `tools/contact_sheet.py`. |
+| W3 Bubble layout | **Done** 2026-10-30. The real-art check passed 2026-11-01: no reading-order issues on 33 panels. Leftovers moved to W7. |
+| W4 Character consistency | **Done** 2026-11-01. Every recurring character is on-model wherever they're drawn: 52/52 on the full story, 30/30 on the 21 panels the fix wasn't tuned on. Optional experiments moved to W8. |
+| **W6 LoRA training** | **Next.** Not started. Decisions to settle first are listed in W6. |
+| W5 Inpaint path | Dormant until W6 produces a LoRA. Must land before multi-character panels with a LoRA can be judged. |
+| W7 Lettering overhaul | Not started. Your 2026-11-01 review found lettering the weakest part of the output. Problems 4, 15, 17, 18, 21–24. No GPU needed. |
+| W8 Generation clean-up | Not started. Problems 7, 8, 16, 25, plus golden-run speed. GPU A/B runs. |
+| W9 Housekeeping | Not started. Problems 19, 20, plus unused model fields. |
 
----
+## Where things stand (verified 2026-11-01)
 
-## Where things actually stand (verified 2026-10-30)
+- **Unit tests:** 418 pass (`pytest tests --ignore=tests/e2e`, ~1 min).
+- **Full e2e:** passed on real Wan2GP + Ollama.
+  - `story.cbml`, 33 panels → pages → `.cbz`, in 41.5 min on AC power: 13 min
+    of LLM refinement, 27 min of generation.
+  - Output is in `tests/e2e/outputs/e2e/`.
+  - Upscaling was skipped: Real-ESRGAN isn't installed (problem 19).
+- **Golden reference** for A/B runs: the golden run `w4_prompts`. Its frozen
+  prompts are in `tests/e2e/fixtures/golden_prompts/`.
+- **Generate on AC power.** On battery the laptop caps the GPU, and large
+  panels take 2–2.5× as long. This was old problem 11, closed.
 
-**Code health is fine.** 412 unit tests pass (`pytest --ignore` the three live
-suites, ~60s). The full pipeline ran end-to-end on real Wan2GP + Ollama on
-2026-06-10: 33 panels → 10 pages → `.cbz`, output in `test_e2e_output/`.
-Upscale was skipped because `realesrgan-ncnn-vulkan` wasn't on PATH.
+## Open problems
 
-**2026-10-30 W1 re-run.** 17 panels (pages 2, 4, 5, 6, 10, covering every slot
-aspect in the story) regenerated with the W1 bridge fix. The June run's
-LLM-refined prompts and seed 42 were reused, so W1 is the only variable.
+Numbers carry over from the archived plan; code and tools cite them.
 
-**2026-10-30 golden baseline** (`golden_run.py --force`, from scratch). These
-are the 12 panels of `golden.cbml`, i.e. story pages 3, 8–9 and 10,
-renumbered golden pages 1, 2–3 and 4. Output is in `golden_output/`
-(gitignored). Since W4.2 re-froze the prompts, the reference for A/B runs is
-`golden_w4_prompts/` (see W4). **Generation is
-deterministic:** the three story-page-10 panels came out bit-identical to the
-W1 re-run's, so a difference between two golden runs is caused by what
-changed. An earlier 8-panel draft of the subset (story IDs) is cited below
-as "first golden run".
-
-Panel IDs below are **story** IDs (`story.cbml`) unless marked "golden". The
-mapping is golden `page_1_*` = story `page_3_*`, golden `page_2_*` = story
-`page_8_*`, and golden `page_4_*` = story `page_10_*`.
-
-**Output quality is not.** Findings from inspecting the June run, updated with
-the W1 re-run and the golden runs:
-
-| # | Problem | Old doc said | What the 2026-06-10 output shows | Root cause |
+| # | Problem | Evidence | Cause / lead | Fix in |
 |---|---|---|---|---|
-| 1 | **Panel dimensions** — **FIXED, verified 2026-10-30.** 17/17 re-run panels came out at exactly the requested size (448×1024 where June gave 784×576, 224×1024 where it gave 592×448, 1024×512 where it gave 848×624), all within 1.6% of slot aspect. | RESOLVED | Every panel comes out ~4:3 landscape whatever was requested. A 0.44 portrait slot gets 784×576; a 2:1 slot gets 848×624; a 0.22 slot gets 592×448. The pixel *area* matches the request; the *aspect* doesn't. | **Confirmed in Wan2GP source.** The `"K"` in `video_prompt_type: KI` makes wgp take the output aspect from `image_refs[0]`, which is the style ref (1342×996). `resolution` only sets the pixel budget (`fit_canvas: 0`). The formula reproduces 784×576, 1184×880 and 848×624 exactly. No check compares *output* dims to the request, so this went unnoticed. |
-| 2 | **Text cut off / bubbles in odd places** (final pages) — **FIXED with #1, verified 2026-10-30.** Re-run pages have no edge-clipped text. `page_010` panel 3 has its characters back. `page_005`'s 2:1 panels regained bubbles that cropping had removed entirely ("Later that night.", "Constantly."). | RESOLVED | On the un-cropped `panels_text/` images, bubbles are mostly well placed and fully legible. On assembled pages, text is sliced at the panel edges. | Downstream of #1: the assembler's `cover` fit crops a 1.35 panel into a 0.44 slot (keeping ~33% of the width) or a 0.22 slot (~17%). `page_010` panel 3 loses its characters entirely. |
-| 3 | **Bubble reading order** — **FIXED (W3.1), verified 2026-10-30.** Order now holds by construction. Story `page_2_panel_2`, reversed in the W1 re-run, reads correctly after re-lettering, and the checks find no order or overlap issues across all 17 W1-run panels or the 12 golden panels. | RESOLVED | `page_3_panel_1`: CBML order Yuki→Gerald→Yuki→Gerald is rendered fully reversed (last line top-left, first line bottom-centre). | `_place_bubble` is greedy. The first line takes the cheapest slot, which is just above its speaker's head and therefore *low*. Each later line can only go up. The "earlier is higher" bias can't recover. |
-| 4 | **Bubble tail points at wrong speaker** — **fixed for every golden tail (W3.2 + SFace identity blend), 2026-10-30; two placements remain.** Fixed: golden `page_1_panel_1` (background faces had taken both speakers' places) and `page_2_panel_2` (both tails wrong because a silent character was ignored). Golden `page_4_panel_1` (mirrored; David's tail pointed at Ranjeet) was fixed by the identity blend. **Remaining:** golden `page_2_panel_1`, a **regression vs the June baseline**: David's tail-less "EAT IT!" shout sits beside Gerald, and identity evidence is too weak to overrule position. Held-out story `page_4_panel_3`: the Intern has no reference image and the cast was reordered, so 3 of 4 faces are still mis-matched. Not machine-checkable; visible on `sheet_pages.png`. **W4.2's regenerated panels (`golden_w4_prompts`) move the misses around.** `page_2_panel_1` now attributes correctly. But in `page_4_panel_1` David and Ranjeet are swapped (David's tail points at Ranjeet), although the W1 image of the same pair matched correctly. In `page_1_panel_1`, "Like 2008?" is drawn without a tail although Yuki's face was matched; cause not investigated. | RESOLVED | `page_8_panel_4`: David's line has its tail on Gerald. | `_resolve_speaker_anchors` sorts *speakers only* left to right and matches them to *all* detected faces sorted by x. Silent characters, background extras, or one false-positive face shift every match by one. |
-| 5 | **Character drift** — **FIXED on the golden subset (W4.2), verified 2026-11-01; held-out check pending the full e2e run.** W1 fixed most solo-panel drift. Scored formally (W4.1), Gerald was still white-haired in 2 of his 7 golden appearances. Both prompts called him "pale white" without "young", because the refiner had dropped it. After W4.2 (explicit age and hair in the descriptions; the refiner keeps them verbatim), every recurring character is on-model in every golden panel they're drawn in. | OPEN | Worst on **solo** panels. Gerald's ref is young with brown hair; solo panels 3-4 and 6-1..3 show a white-haired old man and a clownish face. **Multi-character** panels are often excellent: in `page_8_panel_4` all four characters match their refs. | **Confirmed in Wan2GP source: `image_start` is silently discarded for Klein.** It's kept only if `"S"` is in `image_prompt_type`, which Klein doesn't allow. The primary character's ref goes *only* to `image_start` and is excluded from `image_refs` (`ref_preparer._collect_supporting`). So the most important character on every panel has had **no visual reference**; only the other characters (in `image_refs`) were conditioned. |
-| 6 | **Inpaint quirks** ("two disjointed halves") | "Addressed, visual confirmation pending" | Not exercised since May. `enricher.multi_char_strategy: auto` routes every LoRA-free multi-char panel to a single pass, so all 33 panels in the June run were `single`. | **Confirmed in Wan2GP source: our inpaint settings never applied.** Tasks don't send `settings_version`, so `flux_handler.fix_settings` forces `denoising_strength = 1.0`, overriding our 0.25. `masking_strength` 0.3 locks the area outside the mask for only ~2 of 4 steps, and flux2 never pastes the original pixels back. Net effect: the whole panel gets regenerated, so the May "two disjointed halves" came from Wan2GP's settings, not our masks. Dormant until a character has a LoRA. |
-| 7 | Gibberish signage ("PICAK", "FIOOUFEK") | — | Neon signs in the bar scenes carry nonsense text. | Location descriptions invite signage, and the negative prompt is inert (#8). |
-| 8 | **`guidance_scale` and `negative_prompt` do nothing** | (bubble negatives marked as the fix for bubbles painted into the art) | Golden baseline: Wan2GP painted gibberish speech bubbles into **3 of 12** panels (golden `page_1_panel_1`, `page_1_panel_3`, `page_2_panel_2`). In `page_1_panel_1` our "Like 2008?" lands on top of one. W4.2 run: 2 of 12 (a small empty one in `page_1_panel_1`, "MEHK" in `page_1_panel_3`). `wan2gp.nag_scale` is now exposed to test this (W4 rung 4). | Confirmed in Wan2GP source. Distilled Klein 9B has no `guidance_max_phases`, so `guide_scale` is forced to 1. The negative prompt is only used through NAG, and only when `NAG_scale > 1` (default 1). Whatever stopped bubbles being painted in, it wasn't the negatives. |
-| 9 | Panel files are JPEGs named `.png` | — | `panels/*.png` start with `ff d8` (JPEG). | wgp writes `.jpg`; `_collect_outputs` copies the bytes to `<id>.png`. Harmless downstream (later stages save real PNGs) but misleading. |
-| 10 | Output→panel pairing is fragile | — | Worked in the June run. | `_collect_outputs` pairs by sorted filename (`<timestamp>_seed42_<prompt>.jpg`). Two tasks finishing in the same second sort by prompt text. A failed task shifts every later panel by one. |
-| 11 | **Generation slower since W1; how much is unclear** | — | W1 re-run: 1597s for 17 panels (avg 83s) vs ~555s for the same panels in June. Small portrait panels ~1.7× slower (e.g. 23s → 39s); large 4–6-ref panels 3–4× (`page_2_panel_1` 71s → 213s). **But the golden runs did similar large panels much faster:** `page_8_panel_4` (6 refs, 1024×768) 92s and `page_3_panel_1` (4 refs, 912×1024) 63–68s, against ~200s for comparable panels in the 27-minute W1 run. Golden baseline: 19–92s per panel, 582s for 12. | One extra ref per panel (the primary, previously discarded) explains a moderate slowdown: each ref costs about an output image's worth of tokens. The large-panel cliff did **not** reproduce in a short run, so it isn't size/ref count alone. Candidates: laptop thermal throttling over long runs, or another GPU process (LM Studio was resident). **2026-11-01: the W4.2 run points to power state.** It took 1385s against the baseline's 582s. The laptop was on battery (36%, discharging) under the "Ultra Power Saver" plan, with the GPU power limit at 55 W against a 90 W default. No thermal or hardware slowdown was flagged. Per denoising step, the large multi-ref 1024×768 panels took ~47s against ~13s on the same ref stacks in the 2026-10-30 golden run; small panels took ~8s against ~6s. The compute-bound large panels suffer most, which is this problem's pattern. **Not yet confirmed:** the power state of the earlier runs is unknown, so re-run the golden subset on AC power before acting. Levers if it persists on AC: W4 rung 3 (fewer refs), lower `base_resolution` + upscale. |
-| 12 | **Text tiny and over-wrapped in narrow panels** — **FIXED (W3.5), verified 2026-10-30.** Golden `page_4_panel_3`'s line went from 7 lines to 3. 0.22-slot panels still use the 16px floor, but on-page that's ~47px against ~60px for the wide panels. | — | Visible now that panels aren't cropped. `page_010` (224px-wide panels) gets 1–3 words per line at the 16px floor; one thought cloud's text overruns its outline. | `text.*_font_ratio` and `max_bubble_width` (42% of W) scale with panel **width**, so tall narrow panels get the smallest text. See W3.5. |
-| 13 | **Text lines collide inside a bubble** — **FIXED (W3.6), verified 2026-10-30** on golden `page_4_panel_1` and the `page_1_panel_2` thought cloud. | — | Golden `page_4_panel_1`: "So there / are more / of you?" draws "are more" and "of you?" on top of each other. | Lines advance by each line's own glyph-ink height (`_measure`), not the font's line height. A line without descenders is "short", so the next one rides up into it. Worst at small sizes. See W3.6. |
-| 14 | **Face detector misses stylised faces, accepts junk** | — | First golden run, `page_6_panel_1` (not in the current subset): Gerald's grinning face is missed; the only hit is a 0.53-score box on the floor. | The hybrid YuNet + MediaPipe threshold is 0.5. Everything face-driven inherits this (tail anchors, problem 4). The character sheet only head-crops on ≥ 0.6. |
-| 15 | Thought-bubble trailing dots are tiny and bunched | — | Golden `page_1_panel_2`: the three dots sit within ~20px of the cloud, reading as one blob. | They share the speech-tail length cap (`tail_frac` × short edge), so they span only ~22px on a 448-wide panel. Not in W3's scope; noted for later polish. |
-| 16 | **Four characters in a 0.22 strip: only two get drawn** | — | Golden `page_4_panel_1` ("medium group shot", Gerald, Yuki, Ranjeet, David in a 224×1024 slot) shows only David and Ranjeet in both the W1 and the W4.2 run. Gerald's "Probably." is correctly left tail-less. | Not drift: no identity lever fits four seated people side by side in that width. Fix in the script (a wider slot, or fewer characters on the panel) or cue a vertical arrangement in the prompt. Unscheduled. |
+| 4 | Bubble tail points at the wrong character | e2e: `page_5_panel_2` (Gerald and Yuki swapped) and `page_10_panel_1` (David and Ranjeet swapped). `page_5_panel_2` is the worst case: Yuki is on the left and Gerald on the right, so position alone (Yuki listed first) was right, and SFace overruled it. Tails then hand Yuki's lines to Gerald, which reads as the conversation in the wrong order. | Matching blends position with SFace identity (W3). The W3 spike found the blend broke none of 9 panels; this panel shows it can. SFace is weak on this art (cosine 0.1–0.56), so identity can't always overrule position. | W7 |
+| 6 | Inpaint settings never reach Wan2GP | Not exercised since May: `auto` sends LoRA-free panels through a single pass. | Inpaint tasks don't send `settings_version`, so wgp forces `denoising_strength = 1.0`. `masking_strength` 0.3 locks the area outside the mask for only ~2 of 4 steps, and flux2 never pastes the original pixels back. Net effect: the whole panel is regenerated. | W5 |
+| 7 | Gibberish signage | Bar scenes: neon signs read "PICAK", "CERAID", "DORK". | Location descriptions invite signs, and the negative prompt does nothing unless NAG is on (problem 8). | W8 |
+| 8 | Speech bubbles painted into the art; negative prompt inert | Golden subset: 3 of 12 panels at the 2026-10-30 baseline, 2 of 12 in `w4_prompts`. e2e `page_8_panel_2` (your page 9, panel 1): two painted bubbles with non-English text ("!!/", "ちっ!") beside ours. | Klein is guidance-distilled: wgp forces `guidance_scale` to 1, so the negative prompt only acts through NAG, which needs `NAG_scale > 1`. `wan2gp.nag_scale` is now exposed but untested. | W8 |
+| 14 | Face detector misses stylised faces and accepts junk | An earlier golden `page_6_panel_1`: Gerald's grinning face missed, a 0.53-score "face" on the floor accepted. | Hybrid YuNet + MediaPipe at threshold 0.5. Tails, attribution and the character-sheet crops all inherit it. | Deferred |
+| 15 | Thought-bubble trailing dots are tiny and bunched | Golden `page_1_panel_2`: three dots within ~20px of the cloud. | They share the speech tail's length cap (`tail_frac` × short edge). | W7 |
+| 16 | Characters listed on a panel but not drawn | e2e `page_2_panel_1` (wide crowd shot, 4 listed): only Gerald is identifiable. The 4-character 0.22 strip (golden `page_4_panel_1`, story `page_10_panel_1`) drew 2 of 4 in both golden runs, all 4 in the e2e. | Prompt-dependent: crowd and group shots let the generator drop named characters or blend them into the background. | W8 |
+| 17 | Captions overlap each other | e2e `page_1_panel_1` (688px wide): the top-left and top-right captions (353 and 333px wide) overlap, and the second hides "…by da". | Each caption is sized and placed at its `pos:` on its own. Bubbles avoid captions; captions don't avoid each other. | W7 |
+| 18 | Bubbles cover faces | e2e `page_1_panel_1` (Gerald's thought cloud over his face), `page_2_panel_2` (Yuki's second line over Gerald's head), `page_7_panel_2`. The checks report these as "covers a face"; your review confirmed the first two. | Not investigated: the layout's face-avoidance term didn't hold on these panels. | W7 |
+| 19 | The upscale stage has never run | Both e2e runs skipped it. | `realesrgan-ncnn-vulkan` isn't installed or on PATH. | W9 |
+| 20 | The Intern has no reference image | Drawn as a different person each time. Identity matching can't place him (e2e `page_4_panel_3`: his line has no tail). | `tests/e2e/fixtures/` has `INTERN.txt` only. | W9 |
+| 21 | Tails missing, or too small to see | Your review: no tails on pages 4 (panel 3), 5 (panel 4) and 7 (panel 4). | Four causes in `text_renderer`: (a) shout and whisper bubbles never get a tail, by design (`page_4_panel_3`'s "BANDAID!"); (b) the tail is only drawn up or down, so a bubble level with its speaker's face gets none (`page_1_panel_1`'s thought cloud, golden `page_1_panel_1`'s "Like 2008?"); (c) the speaker wasn't matched to a face, so the tail is left off on purpose (the Intern, problem 20); (d) when drawn, the tail is a fixed 14px wide and at most 5% of the panel's short edge, which vanishes at page scale (`page_5_panel_4`, `page_7_panel_4`). The e2e assembles pages only 800px tall, against 3000px in production, which makes (d) worse. | W7 |
+| 22 | Speech bubbles look like square boxes | Your review: pages 2 (panel 2) and 7 (panel 4). | By design: speech is a rounded rectangle with a 20px corner radius (`_draw_speech`). Comics conventionally use ovals. | W7 (decide) |
+| 23 | Conversation flow unclear; tails cross other bubbles | `page_3_panel_1`: Gerald's "I have seen worse crashes." and "Much earlier." stack touching, with Yuki's "Like 2008?" level with the first, so his two lines read as one speech. "Much earlier."'s tail runs up through the bubble above it. | Layout keeps CBML order (W3) but has no minimum stagger between consecutive bubbles, and tails aren't treated as obstacles. | W7 |
+| 24 | SFX land on faces | Your page 8, panel 2 (`page_8_panel_3`): "SKREEEE" sits across Gerald's mouth. | The script says `pos:center`; SFX are drawn exactly at their anchor and, unlike bubbles, never avoid faces. In a close-up the centre is the face. | W7 |
+| 25 | Actions implied only by SFX or dialogue aren't drawn | `page_7_panel_1`: the SFX is "SCRIBBLE SCRIBBLE", but David isn't writing; the prompt never mentions it. | Neither the prompt builder nor the refiner sees SFX or dialogue: the prompt comes from the action, shot, mood, setting and characters only. | W8 |
+
+**Closed** (details in the archive): 1 panel dimensions · 2 text cut off at
+panel edges · 3 bubble reading order · 5 character drift · 9 panels were JPEGs
+named `.png` · 10 fragile output pairing · 11 slow generation (power state,
+not code) · 12 tiny text in narrow panels · 13 colliding text lines.
+
+**Reviewed 2026-11-01 and left as is** (from your read of the e2e pages):
+- **Page 7, panel 4: David holding garlic bread aloft.** The script says
+  "David raises a tray of garlic bread triumphantly".
+- **Page 9, panel 2: David's "the vampire thing" line.** It's in the script.
+  The reveal is page 8's bottom panel: red eyes, fangs and "I HAVE A
+  CONDITION!".
+- **Page 3, panel 2 (odd eyes) and page 7, panel 2 (gaze off the paper).**
+  Generation limits with no planned lever. Action wording such as "reading
+  the paper" is the cheapest one, if they recur.
 
 ---
 
-## Workstreams (priority order)
+## Workstreams (open, in order)
 
-### W1 — Fix the generation contract (dimensions + reference routing). COMPLETE, BUT WON'T BE FULLY VERIFIED UNTIL e2e RUN.
+### W6 — LoRA training. NEXT.
 
-**Why first.** It's the highest-leverage fix in the repo. Problems 1, 2 and
-the solo-panel half of 5 share one root cause: `_build_wangp_task` and
-`ref_preparer` assumed Klein reads `image_start`, and it doesn't. The fix is
-a few task fields plus deleting code. Until the panel shape is right, every
-bubble-placement and consistency judgement on assembled pages is
-contaminated by cropping.
+W6 was the fallback if W4 missed its consistency bar. W4 met the bar without
+LoRAs, so W6 isn't needed for consistency on this story. What a character
+LoRA still adds: an identity that doesn't hang on one reference image and a
+text description. It's also what sends multi-character panels down the
+per-character inpaint path (W5).
 
-**What Wan2GP v11.61 actually does with Klein (`flux2_klein_9b`),** traced in
-the local install (`C:\pinokio\api\wan.git\app`) and spot-checked by hand:
+**Design** (archived `2026-06-10_Implementation_plan.md` §14.6):
+- `src/lazycomics/ai_toolkit_bridge.py`, mirroring `wan2gp_bridge.py`: a
+  headless subprocess into the Pinokio-managed env.
+- `train_character_lora(project, character_id, *, config) -> Path`. On
+  success it calls `asset_registry.set_lora(...)` with the character's name
+  as the trigger word. It skips characters that already have a LoRA unless
+  `force=True`.
+- An `ai_toolkit:` config section (install path, Python env, training
+  defaults), mirrored in `lazycomics_config.yaml` (the parity test enforces
+  it).
+- Already wired downstream:
+  - `prompt_builder` puts trigger words first;
+  - the bridge copies LoRAs into Wan2GP's `loras/` and sends
+    `activated_loras` / `loras_multipliers`.
 
-| Field / letter | Real behaviour | Cite |
-|---|---|---|
-| `image_start` | Discarded unless `"S"` is in `image_prompt_type`, which Klein doesn't allow. | `wgp.py:1003-1023` |
-| `video_prompt_type` `I` | Use `image_refs`. | `wgp.py:943-950` |
-| `video_prompt_type` `K` | Treat `image_refs[0]` as the "main subject / landscape" ref: output aspect = that image's aspect, resized to `resolution`'s pixel area. | `wgp.py:6557-6563`, `utils.py:505-518` |
-| `"I"` without `K` | Output = `resolution` exactly (rounded to 16). Every ref is scaled to the output's pixel area at its *own* aspect. | same |
-| refs | No count cap and no per-ref weight. Refs are distinguished only by time-offset position (10, 20, 30…). Each ref costs about one output-image's worth of tokens. A ref side < 64px or aspect > 8 raises `ValueError`. | `flux2_adapter.py:69-151` |
-| `guidance_scale` | Ignored: forced to 1 because Klein 9B has no `guidance_max_phases`. | `flux_main.py:94,286` |
-| `negative_prompt` | Used only through NAG, and only when `NAG_scale > 1`. | `flux_main.py:287-293` |
-| `settings_version` | Absent → treated as 0 → legacy migrations run. One of them forces `denoising_strength = 1.0`. Current value is **2.58**. | `flux_handler.py:420-421`, `wgp.py:128` |
-| `output_filename` | Literal name (placeholders allowed). Collisions get a `(2)` suffix instead of overwriting. | `wgp.py:7037-7041` |
+**Checked 2026-11-01:**
+- AI Toolkit is installed through Pinokio at `C:\pinokio\api\ai-toolkit.git`
+  (commit `ec58dcd`, 2026-05-18). It has a Flux 2 Klein trainer
+  (`extensions_built_in/diffusion_models/flux2/flux2_klein_model.py`).
+- Its example configs target 24 GB of VRAM; this laptop's GPU has 16 GB.
 
-**Landed 2026-10-30** (problems 1, 2; see the table):
-- Base-pass tasks send `video_prompt_type: "I"` and `settings_version: 2.58`.
-- Every ref goes in `image_refs`, primary first, and `image_start` is no longer
-  sent. The ref order is otherwise unchanged (primary, style, location, other
-  characters), so the W1 re-run changed one variable; W4.2 tunes it.
-- `ref_preparer` keeps refs at native aspect: crop and `detect_face_centre`
-  were deleted.
-- `geometry` snaps to 16px, Wan2GP's block size. 64 distorted the 0.22 slots
-  by 12%.
-- `_collect_outputs` warns on output-size mismatch.
-- The e2e test asserts panel aspect.
+**Settle before building:**
+1. **Training data.** Each character has one reference image, and a LoRA
+   usually trains on 10–30 varied ones. Options:
+   - generate a varied set per character with Klein from the reference,
+     then hand-pick;
+   - supply more art.
+2. **Compatibility.** Before a full run, confirm Wan2GP loads an AI Toolkit
+   Klein LoRA (file format, key names) using a tiny training run.
+3. **VRAM.** Find settings that fit 16 GB (quantisation, rank, resolution).
+4. **How to judge it.** With a LoRA, `enricher.multi_char_strategy: auto`
+   sends that character's multi-character panels to the inpaint path, whose
+   settings don't apply yet (problem 6). Until W5 lands, judge on solo panels
+   or set `multi_char_strategy: single`.
+5. **Done when** (proposal):
+   - one character's LoRA trains in a documented time and is registered with
+     `set_lora`;
+   - a golden run with it is at least as consistent as `w4_prompts`
+     (Reference, "Consistency bar").
 
-Remaining:
-
-1. **Deterministic output pairing.** Set `output_filename` to the panel ID
-   per task and collect by name, not by sorted position. While there,
-   re-encode to real PNG (problems 9, 10). Keep wgp's EXIF settings when
-   re-encoding (see "Verifying a change").
-
-(Config honesty was done under W4: `guidance_scale` is marked ignored for
-Klein, and `wan2gp.nag_scale` is exposed.)
-
-**Done when:** that's in and the full e2e test passes on real hardware
-(it now asserts aspect). That run takes over an hour since problem 11 and
-wipes `test_e2e_output/`, so run it at a convenient moment rather than per
-change; the golden subset is the per-change check.
-
-### W2 — A fast, honest verification loop. COMPLETE AND VERIFIED.
-
-The full 33-panel e2e run took ~30 min in June and over an hour since W1
-(problem 11). Apart from W1's new aspect assertion, nothing in it checks
-*quality*. Build (spec → as built):
-
-1. **Golden subset fixture.** 2–3 pages cut from `story.cbml` that cover the
-   hard cases: tall-narrow slots (0.22, 0.44), a Gerald-solo panel, a
-   2-speaker panel with 4 lines (`page_3_panel_1`), a 4-character panel
-   (`page_8_panel_4`). Target: <8 min per iteration.
-   → `tests/fixtures/integration/golden.cbml`: story page blocks 3, 8 (a
-   2-page spread) and 10, the only three that cover every listed case. 12
-   panels, renumbered `page_1_*` (story 3), `page_2_*` (story 8–9) and
-   `page_4_*` (story 10). Verified to enrich identically to the same panels
-   in the full story. Frozen LLM-refined prompts are in `golden_prompts/`
-   (from the June run, re-keyed; re-frozen 2026-11-01 by W4.2), so runs are
-   comparable.
-2. **Contact sheets** (`tools/contact_sheet.py`):
-   - *Per page:* the raw panel, the panel with text, and the slot-cropped
-     result side by side, so cropping damage is visible at a glance.
-   - *Per character:* the reference image next to a crop of that character
-     from every panel they appear in. This is the consistency yardstick for
-     W4.
-   → `tools/contact_sheet.py <project_dir>` writes `sheet_pages.png` (per
-   page: raw | lettered | as placed on the page, with the assembled page
-   alongside) and `sheet_characters.png`. Logic is in
-   `src/lazycomics/review.py` (unit-tested). "As placed" uses
-   `<project>/panel_slots.json`, a new assembler record of each panel's
-   visible window.
-3. **Machine-checkable assertions** in the e2e test: panel aspect vs request
-   (W1.4), no bubble rect outside the visible slot after cropping, and every
-   tail anchor inside a detected face box.
-   → All three are in `test_integration_e2e.py`, via `review.check_panel`
-   kinds `slot` and `tail_anchor`. The tail check is true by construction
-   today, so it's a regression guard. The slot check was validated on the
-   June panels: 36 cut-off boxes flagged, e.g. all three lines of story
-   `page_2_panel_2`. Not yet exercised by a real e2e run (that's W1's
-   pending run). Needs `text_renderer`'s new `panels_text/<id>.layout.json`.
-
-**Additions beyond the spec** (each serves a later workstream that names it):
-- `review.check_panel` also reports reading order, overlaps, covered faces
-  and missing tails (W3's done-when).
-- `golden_run.py --no-generate` re-letters and re-checks without the GPU
-  (W3's loop).
-- `--baseline` adds a before/after column (W4's experiments).
-
-**Done when:** one command regenerates the golden subset and writes both
-contact sheets. → Met 2026-10-30. `python tools/golden_run.py --force`,
-starting from no `golden_output/`, generated all 12 panels and wrote
-`report.txt`, `sheet_pages.png` and `sheet_characters.png`.
-- **Time:** generation took 582s (19–92s per panel), so the **<8 min target
-  is missed** by ~2 min. The no-GPU re-check loop takes 10s.
-- **Speed levers** (not applied): `--base-resolution 768`, or problem 11's
-  ref levers. Decide whether to accept ~10 min or revisit the target.
-- **Checks:** 12/12 panels clean. The visible problems (problems 4, 5, 8,
-  12, 13) are the kind the checks can't judge, and the sheets show them.
-- **Determinism:** generation is bit-identical across runs, which is what
-  makes the A/B comparisons valid.
-
-### W3 — Bubble layout correctness
-
-Iterate with `tools/golden_run.py --no-generate`: it re-letters and re-checks
-the golden panels in seconds, no GPU.
-
-1. **Reading order by construction (problem 3).** Replace greedy per-line
-   placement with two phases. (a) Allocate vertical bands top to bottom in
-   CBML line order, with a Z-path across columns when two speakers alternate.
-   (b) Position each bubble horizontally inside its band near its speaker,
-   using the existing cost terms (busyness, face avoidance, tail length).
-   Unit regression: the June `page_3_panel_1` layout, already pinned in
-   `tests/test_review.py`. The golden baseline has no live failure (problem
-   3), so also check the fix on real art: run `tools/contact_sheet.py` on
-   the next full e2e output, where story `page_2_panel_2` failed in the W1
-   re-run.
-2. **Speaker attribution (problem 4).** Match *all* panel characters (from
-   `bubble_layout` order), not just speakers, to faces. Drop faces below a
-   size threshold relative to the largest face, so background extras don't
-   count. When face count ≠ character count, match by nearest predicted
-   region centre instead of rank, and omit the tail (fail closed) when the
-   match is ambiguous. Positional matching can't fix golden
-   `page_4_panel_1`, where the model mirrored the predicted order. That
-   needs identity: compare each face crop to the characters' refs (e.g. CLIP
-   image embeddings). Decide after trying the cheap version.
-3. **Persist what was decided.** Write `detected_faces` and
-   `actual_character_regions` back to the enriched JSON (the old forward
-   contract) so re-renders are deterministic and inspectable.
-4. Then polish: ≥3-bubble numbering (only if still needed), tail-length
-   minimum stub, thought-bubble cloud sizing.
-5. **Size text from panel area, not width (problem 12).** Base font size and
-   `max_bubble_width` on `sqrt(W*H)` (or the panel's on-page scale) so a
-   224×1024 panel doesn't get the smallest text in the book. Let bubbles in
-   narrow panels use most of the width. Regression check: golden
-   `page_4_*`.
-6. **Line spacing from the font, not the ink (problem 13).** Advance each
-   wrapped line by the font's line height (ascent + descent, or
-   `font.getbbox("Ay")`), not the per-line glyph bbox. Applies to bubbles
-   and captions.
-
-**Done when:** `golden_run.py` reports no reading-order or overlap issues,
-`sheet_pages.png` shows every tail on the right character, and no
-narrow-panel text is over-wrapped or colliding.
-
-**As built (2026-10-30).** All in `src/lazycomics/text_renderer.py`.
-Implemented in dependency order: 6 and 5 (sizes) → 2 (who is where) → 1
-(placement) → 3 → 4. Verified by re-lettering the golden baseline's panels
-(`golden_w3/`, compared against `golden_output/`) and the 17 W1-run panels;
-no regeneration was needed.
-
-1. **Reading order** → `_layout_bubbles`, the spec's two phases:
-   - (a) Every allowed band structure is enumerated: an alternating
-     speaker standing further right *may* share the previous band (the
-     Z-path), and a speaker's consecutive lines always stack.
-   - (b) Band heights are chosen jointly (a DP over candidate heights near
-     the speakers) and x positions greedily, using the existing cost terms.
-
-   Order and non-overlap hold by construction. **Two cost terms were
-   added**, each fixing something the panels showed:
-   - Faces are kept clear by one tail length, so tails don't stab into
-     faces. Without this, two existing tests failed.
-   - A tailed bubble placed beyond tail reach of its speaker is penalised.
-     Busyness otherwise pulled bubbles 250px away onto flat floor.
-
-   Captions and SFX are obstacles. Results: no order or overlap issues on
-   any golden or W1-run panel; story `page_2_panel_2` is fixed. The e2e
-   check via `contact_sheet.py` is still to come with W1's pending run.
-2. **Attribution** → `_match_characters_to_faces`, as specced:
-   - all characters, not just speakers;
-   - faces under 50% of the tallest dropped;
-   - rank match when counts are equal, else minimum total distance;
-   - fail closed when ambiguous (within 5% of panel width).
-
-   Fixed golden `page_1_panel_1` and `page_2_panel_2`. Mirrored
-   compositions can't be fixed by position; the identity decision below
-   (option a) fixed one of the two.
-3. **Persist** → `render_text` writes `detected_faces`,
-   `actual_character_regions` (character → face box) and
-   `detected_faces_for` (sha1 of the panel image) into the enriched JSON.
-   - Re-renders of the same image reuse them.
-   - A regenerated image is detected afresh.
-   - Hand edits are honoured, including a hand-added face the detector
-     missed (problem 14).
-   - `enrich()` clears them.
-4. **Polish:**
-   - ≥3-bubble numbering: **not needed.** The 4-line golden
-     `page_1_panel_1` now reads unambiguously.
-   - Minimum tail stub: 12px (`_TAIL_STUB_PX`).
-   - Thought-cloud sizing: the June overflow was the line-spacing bug;
-     after 6 the text sits inside the cloud with room to spare, so no
-     sizing change was needed. The trailing dots are a separate, smaller
-     issue (problem 15).
-5. **Area-based sizing** → font and wrap width scale with √(W·H). The
-   ratios are the old width ratios × √(4/3), so 4:3 panels keep the size
-   tuned in Phase 3. Config values and comments are updated. Captions get
-   the same wrap-width rule.
-6. **Line spacing** → `_line_height` (font ascent + descent) for bubbles
-   and captions. SFX now record their true ink box.
-
-Tests: 16 new in `test_text_renderer.py`. 13 of the first 14 fail against
-the old renderer. The obstacle test was rewritten until it fails without
-the obstacle term.
-
-**Identity decision (W3.2: "decide after trying the cheap version").** The
-cheap version left 2 of 12 golden panels mirrored. The options were (a)
-OpenCV SFace, (b) CLIP (torch, ~2 GB), and (c) defer identity. **You chose
-(a), 2026-10-30.**
-
-- *Spike.* 22 faces across 9 panels, with identities checked by eye:
-  5 golden panels for tuning and 4 W1-run panels held out.
-
-  | Method | Golden faces | Held-out faces | Panels fully right | Broke a correct panel? |
-  |---|---|---|---|---|
-  | Position only | 9/13 | 6/9 | 6/9 | — |
-  | SFace only | 11/13 | 4/9 | 6/9 | yes (2) |
-  | Blend | 11/13 | 7/9 | **7/9** | **no** |
-
-  SFace's cosine similarities on this art are weak (0.1–0.56; its
-  same-person threshold on photos is 0.363), and plain crops without
-  landmark alignment were near-useless (8/13). So identity is used only
-  blended with position.
-- *Built.* `src/lazycomics/face_identity.py`, plus a blend in
-  `_match_characters_to_faces`. On panels with 2+ characters and a
-  reference image, each pair's score is its SFace cosine minus 0.25 × its
-  distance from the predicted centre (as a fraction of the width).
-  - The weight was chosen on golden, inside the range 0.125–0.45 that keeps
-    correct matches and fixes `page_4_panel_1`, then confirmed on held-out.
-  - With no usable identity evidence it is exactly the position-only
-    matcher, including failing closed.
-  - The layout record notes which was used (`"matching"`).
-- *Model.* Downloaded on first use from the OpenCV Zoo to
-  `src/lazycomics/assets/models/face_recognition_sface_2021dec.onnx`
-  (38.7 MB, gitignored), with SHA-256 pinned (`0ba9fbfa…4e79`). If the
-  download fails, matching uses position only and says so once. To bundle a
-  local copy later, commit that file and remove its `.gitignore` line.
-  - **Found on the first real run:** with `SSLKEYLOGFILE` set (it is in
-    this harness's environment), `ssl.create_default_context()`
-    hard-crashes Windows Python (`OPENSSL_Uplink`). The downloader uses a
-    plain verifying `SSLContext` instead, and sweeps up `.part` files left
-    by a crash.
-- *Result.* Golden `page_4_panel_1` is fixed: David's tail now points at
-  David. Every tail in the golden subset is now on the right character, and
-  held-out results match the spike.
-- **Still wrong:**
-  - Golden `page_2_panel_1`: David's tail-less "EAT IT!" sits beside
-    Gerald, because identity evidence there is too weak to overrule
-    position.
-  - Held-out story `page_4_panel_3`: the Intern has no reference image,
-    and the generator reordered the cast.
-
-  Both are tracked under problem 4.
-
-**Done when → met 2026-10-30** on the golden subset: no reading-order or
-overlap issues, every tail on the right character, and no over-wrapped or
-colliding narrow-panel text. The checks report only the designed
-fail-closed `no_tail` for Gerald, who isn't in `page_4_panel_1`.
-Outstanding:
-- the spec's real-art reading-order check on the next full e2e run, done
-  so far on the 17 W1-run panels;
-- the residual attributions above.
-
-### W4 — Character + style consistency
-
-**Bar met on the golden subset at rung 2 (prompt wording), 2026-11-01.**
-Still to do: the held-out check on the full e2e run, and your review of the
-sheets.
-
-**Yardstick.** `sheet_characters.png` now head-crops each character on the
-face W3 matched to them, multi-character panels included (`review.py`). Run
-each experiment as `golden_run.py --force --out golden_<name> --baseline
-<previous rung's dir>`. `--baseline` puts the baseline's crop under each
-crop, as well as adding a column to `sheet_pages.png`. Crops follow W3's
-attribution, so where that is wrong (problem 4) the crop shows someone else.
-Read the label and judge those panels on `sheet_pages.png`.
-
-**Definition of "consistent enough".** On the per-character contact sheet, a
-reviewer can identify each recurring character by hair colour/style, age
-band, and outfit in ≥90% of crops without reading the panel's dialogue.
-Scored per recurring character (Gerald 8 appearances, Yuki 5, Ranjeet 5,
-David 4) over the appearances where the character is actually drawn. A
-character the generator left out is a composition problem (problem 16),
-counted separately. An automated score (CLIP image-embedding similarity of
-crop vs reference) is still unbuilt; manual review takes a minute per run.
-
-**Ladder results** (on-model / drawn, scored by eye):
-
-| Rung | Run dir | Gerald | Yuki | Ranjeet | David | Verdict |
-|---|---|---|---|---|---|---|
-| 1 Re-baseline | `golden_w3` (W1 panels, W3 lettering) | 5/7 | 4/4 | 5/5 | 4/4 | **Fails** on Gerald: white-haired in `page_1_panel_4` and `page_2_panel_2`, both prompts saying "pale white" with no "young". |
-| 2 Prompt wording | `golden_w4_prompts` (`--refine`) | 7/7 | 4/4 | 5/5 | 4/4 | **Meets the bar.** Young, messy brown hair, navy suit in every Gerald crop, close-ups and the vampire moments included. |
-| 3 Ref order/count | — | | | | | Not run (see below). |
-| 4 Steps / NAG | — | | | | | Not run (see below). |
-
-Gerald and Yuki are missing from `page_4_panel_1` in both runs (problem 16).
-
-**What rung 2 changed:**
-- *Character descriptions* (`tests/fixtures/integration/*.txt`). Every
-  recurring character now states an age band and hair, matched to their
-  reference image. Gerald's "young pale white male … hair slightly messy"
-  became "young man in his twenties, pale skin, short messy brown hair, …".
-  David lost "reading glasses", which his reference doesn't have. INTERN is
-  unchanged (no reference).
-- *Refiner system prompt* (`llm_refiner.DEFAULT_SYSTEM_PROMPT`). Appearance
-  descriptions are kept verbatim, next to their character, and the 75-word
-  aim no longer counts them. That aim bought nothing: Klein's Qwen3 encoder
-  pads every prompt to 512 tokens. The longest refined prompt
-  (`page_2_panel_4`) is now ~200 words.
-- *Refiner timeout* 60s → 300s. The first three requests of the first
-  `--refine` run timed out while Ollama loaded the model from disk, leaving
-  those panels unrefined. A full pipeline run would hit the same thing.
-- *Re-frozen.* `golden_prompts/` now holds rung 2's refined prompts, so
-  `golden_w4_prompts/` (gitignored) is the reference for later A/B runs and
-  reproduces from the fixtures. `golden_output/` no longer does.
-
-**Side effects seen on the sheets (not scored):**
-- Painted-in bubbles dropped from 3 panels to 2 (problem 8).
-- Yuki's stray red hair streaks are gone.
-- `page_1_panel_1` now frames Gerald and Yuki as the foreground pair rather
-  than small figures in a crowd.
-- Generation took 1385s against 582s, but rung 2 didn't cause that:
-  prompt length can't change Klein's sequence length (see problem 11).
-
-**Tooling added for the ladder:**
-- `golden_run.py --refine`: fresh prompts through the LLM refiner, then the
-  model is unloaded from Ollama so Wan2GP gets the VRAM.
-- `--set KEY=VALUE`: overrides any config value for one run.
-- Rungs 3 and 4 are now config only, defaults unchanged:
-  - `refs.characters_first`, `refs.closeup_location` and `refs.max_refs`
-    (`ref_preparer._order_sources`);
-  - `wan2gp.nag_scale`, sent to wgp only above 1.
-- Re-preparing refs now clears leftover `_ref_N.png` files, and a missing
-  source no longer leaves a numbering gap. The bridge stops collecting at
-  the first gap, so either one changed what it sent.
-
-**Next, in order:**
-1. **Held-out check.** Rung 2 was judged on the 12 panels it was tuned on.
-   The other 21 story panels need the full e2e run (also W1's pending run).
-   Run it on AC power (problem 11).
-2. **Rungs 3–4 are no longer needed for consistency,** but each targets
-   something else. Baseline `golden_w4_prompts`, AC power:
-   - 3: `--set refs.characters_first=true --set refs.closeup_location=false`,
-     then `--set refs.max_refs=N`. Mostly a speed lever: each ref costs about
-     one output image of tokens. Keep a change only if consistency holds.
-   - 4: `--set wan2gp.nag_scale=3` (try 2–5) against painted-in bubbles and
-     gibberish signage (problems 7, 8), and `--set wan2gp.default_steps=8`
-     for detail. Check that NAG reached wgp from the `NAG_scale` in the
-     panels' EXIF (see "Verifying a change").
-3. Rungs 5–7 only if the held-out check fails the bar:
-   - 5: per-panel composite reference (old §14.11);
-   - 6: Flux Dev vs Klein (`tools/profile_architectures.py`);
-   - 7: LoRA (W6).
-
-### W5 — Inpaint path (dormant)
+### W5 — Inpaint path. Dormant until W6.
 
 No action while `auto` routes LoRA-free panels to a single pass. When W6
 produces a LoRA, first fix the task so our settings actually apply (problem
-6), and only then judge the June mask rework (rounded + feathered mask):
-
+6). Only then judge the June mask rework (rounded + feathered mask). The fix:
 - send `"settings_version": 2.58`, otherwise `denoising_strength` is forced
   to 1.0;
-- send `"masking_strength": 1` so the area outside the mask stays locked for
+- send `"masking_strength": 1`, so the area outside the mask stays locked for
   every step (flux2 has no pixel paste-back);
 - note that the output aspect follows the `image_guide` aspect at
   `resolution`'s pixel area.
@@ -449,29 +141,219 @@ produces a LoRA, first fix the task so our settings actually apply (problem
 Validate on a real 2-character panel before building face-driven masks (old
 §14.4a steps 1–3).
 
-### W6 — LoRA training (`ai_toolkit_bridge.py`) — backup for W4
+### W7 — Lettering overhaul
 
-Unchanged from the old §14.6 design: mirror the Wan2GP bridge pattern, train
-from registered refs, `set_lora()` on success, skip if a LoRA exists. Only
-start if W4's ladder fails the consistency bar.
+Your manual review of the e2e pages (2026-11-01) found the generated art and
+the page layout largely fine, and the lettering the weakest part:
+- overlapping text;
+- text over heads;
+- missing or invisible tails;
+- wrong speakers;
+- unclear conversation order;
+- boxy bubbles;
+- SFX on faces.
 
-### Deferred (no consumer or not worth it yet)
+The checks caught only some of this, so the done-when includes your review.
+All of it is re-lettering, so no GPU is needed.
 
-- Stay-resident Wan2GP worker (old §14.10). Its payoff was amortising model
-  loads across inpaint passes, which no longer run. Reconsider if golden-subset
-  iterations stay slow.
+1. **Review setup.**
+   - A no-GPU re-letter for any project. For example, a `--reletter` option
+     on `tools/contact_sheet.py` could run `render_text` + `assemble_pages`
+     before the checks, making the e2e output a 33-panel regression set.
+     `golden_run.py --no-generate` only covers the golden subset.
+   - Have the e2e assemble pages at the production size (`assembly.*`
+     config, 3000px) instead of 800px, so what you review is what ships.
+2. **Bubble shapes** (problem 22, needs your decision): oval speech balloons
+   instead of rounded rectangles. Thought clouds already fit text inside an
+   inner ellipse, so the sizing approach exists.
+3. **Tails that read** (problems 21, 23, 15):
+   - draw tails sideways too, so a bubble level with its speaker still
+     points at them;
+   - give shouts a spike toward the speaker and whispers a dashed tail;
+   - scale the tail's width and length with the font, so it survives page
+     scale;
+   - route tails around other bubbles;
+   - give thought-bubble dots their own length;
+   - keep leaving the tail off when the speaker isn't matched (fail closed).
+4. **Placement** (problems 17, 18, 23, 24):
+   - captions on the same edge share its width;
+   - bubbles, clouds and SFX stay off faces (SFX may move within their
+     `pos:` zone);
+   - consecutive bubbles get a minimum stagger, so that a speaker's two
+     lines with another speaker's line between them don't read as one
+     speech.
+5. **Attribution** (problem 4). `page_5_panel_2` shows SFace overruling a
+   correct positional match. Re-measure the blend on the e2e's 33 panels
+   before re-tuning: require a clear identity margin before position is
+   overruled, or drop identity. The blend weight was chosen on 5 golden
+   panels.
+
+**Done when**, on the e2e output and the golden subset:
+- the checks report no overlap, face or order issues;
+- the only missing tails belong to characters whose face isn't visible;
+- your read of the assembled e2e pages finds none of the faults listed above.
+
+### W8 — Generation clean-up
+
+Each item is a golden A/B run against `w4_prompts` on AC power. Keep a change
+only if the consistency bar still holds. Every knob is already a config value
+(`golden_run.py --set`).
+
+1. **NAG** (problems 7, 8). Try `--set wan2gp.nag_scale=3`, then 2 and 5.
+   Confirm `NAG_scale` reached wgp from the panels' settings (Reference,
+   "Verifying a change"). Judge painted-in bubbles and signage. If a value
+   wins, make it the default in the code and the config file.
+2. **Characters not drawn** (problem 16). Try arrangement cues for group
+   shots, in the refiner rules or the prompt template (e.g. "four people
+   around a table"). Judge on golden `page_4_panel_1`, and on story
+   `page_2_panel_1` via the e2e.
+3. **Speed.** The golden run takes 582s against W2's 8-minute target. The
+   lever is fewer refs, since each costs about one output image of tokens:
+   - `--set refs.characters_first=true --set refs.closeup_location=false`;
+   - then `--set refs.max_refs=N`.
+
+   Then decide whether to keep the 8-minute target.
+4. **SFX and dialogue as prompt context** (problem 25). Pass them to the
+   refiner as context, so it can describe the action they imply ("David
+   scribbles notes"), without quoting their text. Quoted text invites
+   painted lettering (problem 8). Check on `page_7_panel_1` via the e2e.
+5. *Optional:* `--set wan2gp.default_steps=8` for detail (Klein is
+   distilled for 4).
+
+### W9 — Housekeeping
+
+1. **Install Real-ESRGAN** (`realesrgan-ncnn-vulkan` on PATH, or set
+   `upscaler.executable`), then run the e2e so the upscale stage finally runs
+   (problem 19).
+2. **The Intern's reference image** (problem 20). Add one to the fixtures,
+   or accept that he's text-only. It's story content, so your call.
+3. **Unused model fields.** Once W5 and W6 settle what they need, delete
+   the `PanelGenerationRequest` fields with no consumer (`pixel_rect`,
+   `occlusion_order`, `composition_flags`, `panel_context`, `pose_ref`,
+   `lora_stack`, in-dataclass `prompt`/`negative_prompt`) and the unused
+   `PageLayout` model.
+4. **Refinement speed.** 33 prompts took 13 min (~25s each), with Ollama
+   loading gemma4 at a 128k context. Try a smaller context on the Ollama
+   server (e.g. `OLLAMA_CONTEXT_LENGTH`).
+
+### Deferred (no consumer, or not worth it yet)
+
+- Stay-resident Wan2GP worker (old §14.10). Reconsider if golden iterations
+  stay slow after W8.3.
 - SAM segmentation (old §14.7).
-- Comic-tuned face detector (old §14.2). Revisit if W3.2's size filtering
-  isn't enough. Evidence it may be needed: problem 14.
+- Comic-tuned face detector (old §14.2); evidence it may be needed: problem 14.
+- An automated consistency score (CLIP crop-vs-reference similarity), only
+  if manual scoring becomes the bottleneck.
 
 ---
 
-## Design principles (carried over)
+## Reference
+
+### Consistency bar (from W4)
+
+On the per-character contact sheet (`sheet_characters.png`), a reviewer can
+identify each recurring character by hair colour/style, age band and outfit
+in ≥90% of crops without reading the dialogue.
+- Score per character, over the panels where they're actually drawn. Count
+  undrawn characters separately (problem 16).
+- Each crop is centred on the face W3 matched to that character. Where
+  attribution is wrong (problem 4) the crop shows someone else, so judge
+  those panels by eye on `sheet_pages.png`.
+- Scripted looks count as on-model (red eyes, fangs, David's reading glasses
+  when the shot calls for them).
+
+**What made it pass (W4.2), so keep it for new characters:**
+- each character's `.txt` states an age band, hair and outfit that match the
+  reference image;
+- the refiner (`llm_refiner.DEFAULT_SYSTEM_PROMPT`) keeps those descriptions
+  verbatim.
+
+Gerald's original "young pale white male" with no hair colour came out
+white-haired in 2 of 7 golden panels.
+
+### Wan2GP v11.61 with Klein (from W1)
+
+Traced in the local install (`C:\pinokio\api\wan.git\app`) and spot-checked
+by hand. `wan2gp_bridge` cites this table.
+
+| Field / letter | Real behaviour | Cite |
+|---|---|---|
+| `image_start` | Discarded unless `"S"` is in `image_prompt_type`, which Klein doesn't allow. | `wgp.py:1003-1023` |
+| `video_prompt_type` `I` | Use `image_refs`. | `wgp.py:943-950` |
+| `video_prompt_type` `K` | Treat `image_refs[0]` as the "main subject / landscape" ref: output aspect = that image's aspect, resized to `resolution`'s pixel area. | `wgp.py:6557-6563`, `utils.py:505-518` |
+| `"I"` without `K` | Output = `resolution` exactly (rounded to 16). Every ref is scaled to the output's pixel area at its *own* aspect. | same |
+| refs | No count cap and no per-ref weight. Refs are distinguished only by time-offset position (10, 20, 30…). Each ref costs about one output image's worth of tokens. A ref side < 64px or aspect > 8 raises `ValueError`. | `flux2_adapter.py:69-151` |
+| `guidance_scale` | Ignored: forced to 1 because Klein 9B has no `guidance_max_phases`. | `flux_main.py:94,286` |
+| `negative_prompt` | Used only through NAG, and only when `NAG_scale > 1`. | `flux_main.py:287-293` |
+| `settings_version` | Absent → treated as 0 → legacy migrations run. One of them forces `denoising_strength = 1.0`. Current value is **2.58**. | `flux_handler.py:420-421`, `wgp.py:128` |
+| `output_filename` | The file's stem (placeholders allowed); wgp adds its own extension. Collisions get a `(2)` suffix instead of overwriting. | `wgp.py:7037-7041` |
+| queue tasks | A task that fails validation is skipped and the run still exits 0. A runtime error makes the run exit 1. | `wgp.py:7490-7597` |
+| prompt length | Klein's Qwen3 text encoder pads or truncates every prompt to 512 tokens, so prompt length doesn't change generation cost. | `text_encoder_qwen3.py:13,57` |
+
+**What the bridge sends** for a base pass:
+- `video_prompt_type: "I"` and `settings_version: 2.58`;
+- every ref in `image_refs`, primary first;
+- `output_filename` = the panel ID;
+- `NAG_scale` only when `wan2gp.nag_scale > 1`.
+
+Outputs are collected by name and re-encoded as PNG. wgp's settings JSON goes
+in the PNG `comment` chunk, as wgp itself does.
+
+### Verifying a change
+
+| Changed | Run | Time |
+|---|---|---|
+| Text rendering / bubble layout | `python tools/golden_run.py --no-generate --out w4_prompts` (re-letters that run's panels in place) | seconds |
+| Anything upstream of generation (bridge, refs, `refs`/`wan2gp` config) | `python tools/golden_run.py --force --out <name> --baseline w4_prompts [--set KEY=VALUE ...]` | ~10 min on AC (582s measured); ~23 min on battery |
+| Character descriptions or the refiner | the same with `--refine`, then freeze `tests/e2e/outputs/golden/<name>/project/prompts/*.txt` into `tests/e2e/fixtures/golden_prompts/` if it wins | + ~1 min |
+| Before a release / after contract changes | `python tests/e2e/test_wan2gp_live_queue.py` (2-panel smoke test, minutes), then `pytest tests/e2e/test_integration_e2e.py -v -s` (replaces `tests/e2e/outputs/e2e/`) | ~40 min on AC |
+
+`golden_run.py` writes `report.txt` (`review.check_panel`: aspect, text cut
+off by the slot, reading order, overlaps, faces covered, tails),
+`sheet_pages.png` and `sheet_characters.png`. `tools/contact_sheet.py
+<project_dir> [--baseline <project_dir>]` writes the same sheets and checks
+for any already-rendered project, e.g. after a full e2e run.
+- The checks can't judge tail *correctness* or likeness; the sheets are for
+  that.
+- Panels are kept between runs, so pass `--force` whenever generation inputs
+  change, or stale panels get reviewed.
+- The subset, and why each page is in it: `GOLDEN_PAGES` in the tool.
+
+**Where runs live.** The layout is in the README's "Development" section.
+Everything is under `tests/e2e/`, and run folders are gitignored:
+- the inputs are in `fixtures/`;
+- live runs go to `outputs/`: `e2e/`, `golden/<name>/`, `live/`,
+  `live_queue/`;
+- old runs kept on purpose go to `archived_test_outputs/`, date-prefixed.
+
+`golden_run.py` takes a bare run name for `--out`/`--baseline` (a folder in
+`outputs/golden/`), or a path. Run names in the archived plans, by current
+location:
+
+| Archived name | Now |
+|---|---|
+| `golden_w4_prompts/` | golden run `w4_prompts` (current A/B reference) |
+| `golden_output/` (2026-10-30 baseline) | `archived_test_outputs/2026-10-30_golden_baseline/` |
+| `golden_w3/` (W4 rung 1) | `archived_test_outputs/2026-10-30_golden_w3/` |
+| `test_e2e_output/` (June e2e run) | `archived_test_outputs/2026-06-10_e2e/` |
+| `tests/fixtures/integration/` | `tests/e2e/fixtures/` |
+
+**Panel settings.** Each generated panel carries the settings wgp actually
+ran with, as JSON (`num_inference_steps`, `NAG_scale`, `resolution`, `seed`,
+per-panel `generation_time`, …). Read them to confirm a `--set` reached wgp,
+or to time panels individually:
+- panels generated since 2026-11-01 (real PNGs):
+  `json.loads(Image.open(p).text["comment"])`;
+- older panels (JPEG bytes named `.png`, e.g. golden run `w4_prompts`):
+  `json.loads(Image.open(p).getexif().get_ifd(0x8769)[37510][8:])`. The
+  first 8 bytes are the `ASCII\0\0\0` charset tag.
+
+### Design principles
 
 1. **Lean.** Add a field/function only when something consumes it.
 2. **Loud failures, no silent fallbacks.** Missing panels get a labelled
-   placeholder; LLM failures keep the original prompt. Dimension mismatches
-   should warn (W1.1).
+   placeholder; LLM failures keep the original prompt; dimension mismatches
+   and missing outputs warn.
 3. **Three-tier knobs:** function arg → `lazycomics_config.yaml` (`cfg_get`) →
    hardcoded default. The config file mirrors every default; `test_config.py`
    enforces parity.
@@ -491,33 +373,7 @@ start if W4's ladder fails the consistency bar.
 10. **`_build_wangp_task` is the sole Wan2GP adapter.** Wan2GP field semantics
     live there and nowhere else.
 
-## Verifying a change (reference)
-
-| Changed | Run | Time |
-|---|---|---|
-| Text rendering / bubble layout | `python tools/golden_run.py --no-generate` | seconds |
-| Anything upstream of generation (bridge, refs, `refs`/`wan2gp` config) | `python tools/golden_run.py --force --out golden_<name> --baseline golden_w4_prompts [--set KEY=VALUE ...]` | ~10 min on AC (582s measured); 23 min on battery |
-| Character descriptions or the refiner | the same with `--refine`, then freeze `<out>/project/prompts/*.txt` into `golden_prompts/` if it wins | + ~1 min |
-| Before a release / after W1-style contract changes | `pytest tests/test_integration_e2e.py -s` (wipes `test_e2e_output/`) | > 1 h |
-
-`golden_run.py` writes `report.txt` (`review.check_panel`: aspect, text cut
-off by the slot, reading order, overlaps, faces covered, tails),
-`sheet_pages.png` and `sheet_characters.png`. `tools/contact_sheet.py
-<project_dir>` writes the same sheets and checks for any already-rendered
-project, e.g. after a full e2e run. The checks can't judge tail
-*correctness* or likeness; the sheets are for that. Panels are kept between
-runs, so pass `--force` whenever generation inputs change, or stale panels
-get reviewed. The subset and why each page is in it: `GOLDEN_PAGES` in the
-tool.
-
-Each generated panel carries the settings wgp actually ran with, as JSON in
-its EXIF UserComment (`num_inference_steps`, `NAG_scale`, `resolution`,
-`seed`, per-panel `generation_time`, …). Read it to confirm a `--set`
-reached wgp, or to time panels individually:
-`json.loads(Image.open(p).getexif().get_ifd(0x8769)[37510][8:])` (the first
-8 bytes are the `ASCII\0\0\0` charset tag).
-
-## Pipeline + contracts (reference)
+### Pipeline + contracts
 
 `enrich` → `build_prompts` → (`refine_prompts_with_llm`) →
 `prepare_references` → `generate_panels` (Wan2GP) → `render_text` →
@@ -527,15 +383,16 @@ Directories: `enriched/` → `prompts/` → `refs_prepared/` → `panels/` →
 `panels_text/` → `pages/` → `pages_upscaled/` → `output/*.cbz`.
 
 - **`bubble_layout`** (enricher): predicted per-character regions, equal
-  horizontal slices in CBML order. Used by the renderer as a left-to-right
-  prior and by the inpaint path for masks.
-- **`actual_character_regions`** (not yet written; W3.3): where characters
-  actually are on the generated panel. Should take precedence over
-  `bubble_layout` in the renderer.
+  horizontal slices in CBML order. The renderer uses it as a left-to-right
+  prior; the inpaint path uses it for masks.
+- **`detected_faces` / `actual_character_regions` / `detected_faces_for`**
+  (written into the enriched JSON by `render_text`): the faces found, which
+  character each belongs to, and a hash of the panel image. A re-render of
+  the same image reuses them, and hand edits are honoured. A regenerated
+  image is detected afresh, and `enrich()` clears them.
 - **`char_generation_strategy` / `primary_character` / `inpaint_order`**
-  (enricher): route single-pass vs inpaint; `auto` picks single-pass unless a
+  (enricher): route single-pass vs inpaint. `auto` picks single-pass unless a
   character has a LoRA.
-- Deferred `PanelGenerationRequest` fields with no consumer (`pixel_rect`,
-  `occlusion_order`, `composition_flags`, `panel_context`, `pose_ref`,
-  `lora_stack`, in-dataclass `prompt`/`negative_prompt`) and the unused
-  `PageLayout` model: delete them unless a workstream above needs them.
+- **Projects store absolute asset paths** in `enriched/*.json`. Moving a
+  project means re-running `enrich` (golden runs do) or rewriting the old
+  path prefix.

@@ -13,9 +13,12 @@ Prerequisites:
     - (Optional) Ollama running at localhost:11434 — LLM stage skipped if absent
 
 Run:
-    pytest tests/test_integration_e2e.py -v -s
+    pytest tests/e2e/test_integration_e2e.py -v -s
 
-Output is left in ./test_e2e_output/ for visual inspection.
+The project is (re)created in ``tests/e2e/outputs/e2e/`` (gitignored) and
+left there for inspection, e.g. ``python tools/contact_sheet.py
+tests/e2e/outputs/e2e``. Each run replaces it; move a run you want to keep
+into ``tests/e2e/archived_test_outputs/`` first.
 """
 
 from __future__ import annotations
@@ -29,15 +32,15 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-SRC = Path(__file__).parent.parent / "src"
+SRC = Path(__file__).parents[2] / "src"
 sys.path.insert(0, str(SRC))
 
 import lazycomics as lc  # noqa: E402
 from lazycomics import review  # noqa: E402
 from lazycomics.config import load_config  # noqa: E402
 
-FIXTURES = Path(__file__).parent / "fixtures" / "integration"
-OUTPUT_ROOT = Path(__file__).parent.parent / "test_e2e_output"
+FIXTURES = Path(__file__).parent / "fixtures"
+OUTPUT_ROOT = Path(__file__).parent / "outputs"  # shared with golden_run.py and the live tests
 
 
 # ---------------------------------------------------------------------------
@@ -88,11 +91,6 @@ def test_full_pipeline_e2e():
         → generate_panels → skip-if-exists check → render_text → assemble_pages
         → (upscale, optional) → export_cbz
     """
-    # --- Clean output tree ---
-    if OUTPUT_ROOT.exists():
-        shutil.rmtree(OUTPUT_ROOT)
-    OUTPUT_ROOT.mkdir(parents=True)
-
     # --- Real config (fails fast if lazycomics_config.yaml is missing) ---
     config = load_config()
     wgp = config.get("wan2gp", {}).get("wgp_root")
@@ -102,16 +100,13 @@ def test_full_pipeline_e2e():
             "Edit lazycomics_config.yaml to point at your Pinokio Wan2GP install."
         )
 
-    # --- Project with the real story.cbml + registered assets ---
-    project_root = OUTPUT_ROOT / "e2e"
-    if project_root.exists():
-        shutil.rmtree(project_root)
-    project_root.mkdir(parents=True)
+    # --- Fresh project with the real story.cbml + registered assets ---
+    # Only this run's own folder is wiped: OUTPUT_ROOT also holds golden runs.
+    if (OUTPUT_ROOT / "e2e").exists():
+        shutil.rmtree(OUTPUT_ROOT / "e2e")
+    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
-    cbml_dst = project_root / "story.cbml"
-    shutil.copy2(FIXTURES / "story.cbml", cbml_dst)
-
-    project = lc.create_project("e2e", cbml_dst, base_dir=project_root)
+    project = lc.create_project("e2e", FIXTURES / "story.cbml", base_dir=OUTPUT_ROOT)
 
     # Register Characters
     for char_name in ["DAVID", "GERALD", "INTERN", "RANJEET", "YUKI"]:

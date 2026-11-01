@@ -3,15 +3,16 @@
 
 Usage::
 
-    python tools/golden_run.py [--out golden_output] [--force] [--no-generate]
-                               [--base-resolution N] [--baseline DIR]
+    python tools/golden_run.py [--out NAME] [--force] [--no-generate]
+                               [--base-resolution N] [--baseline NAME]
                                [--fresh-prompts | --refine] [--set KEY=VALUE ...]
 
-The golden subset is ``tests/fixtures/integration/golden.cbml``: three page
-blocks cut from the e2e story (see ``GOLDEN_PAGES``) with the story's
-registered characters, locations and style. One command runs
+The golden subset is ``tests/e2e/fixtures/golden.cbml``: three page blocks
+cut from the e2e story (see ``GOLDEN_PAGES``) with the story's registered
+characters, locations and style. One command runs
 enrich -> prompts -> refs -> generate -> render_text -> assemble_pages and
-writes into ``<out>``:
+writes into the run folder ``tests/e2e/outputs/golden/<NAME>/`` (default
+``latest``; ``--out`` also takes a path):
 
 * ``report.txt``: per-panel checks (``lazycomics.review.check_panel``:
   aspect, cropped-off text, reading order, overlaps, tails) plus generation
@@ -27,14 +28,15 @@ Iterating:
   stale panels are reused.
 * ``--no-generate`` never starts Wan2GP: re-letter, re-assemble, re-check.
 * Prompts are the frozen LLM-refined set in
-  ``tests/fixtures/integration/golden_prompts/``, and the seed is fixed by
-  config, so two runs differ only by what you changed. ``--fresh-prompts``
-  uses ``build_prompts`` output instead; ``--refine`` also runs it through
-  the LLM refiner, as the full pipeline does. LLM output varies run to run,
-  so to A/B anything else against refined prompts, freeze them first: copy
-  ``<out>/project/prompts/*.txt`` over ``golden_prompts/``.
-* ``--baseline <another --out dir>`` adds that run's lettered panels as a
-  column, and its character crops under this run's, for A/B review.
+  ``tests/e2e/fixtures/golden_prompts/``, and the seed is fixed by config,
+  so two runs differ only by what you changed. ``--fresh-prompts`` uses
+  ``build_prompts`` output instead; ``--refine`` also runs it through the
+  LLM refiner, as the full pipeline does. LLM output varies run to run, so
+  to A/B anything else against refined prompts, freeze them first: copy
+  ``<run folder>/project/prompts/*.txt`` over ``golden_prompts/``.
+* ``--baseline NAME`` (another run's name, or a path such as an archived run
+  in ``tests/e2e/archived_test_outputs/``) adds that run's lettered panels as
+  a column, and its character crops under this run's, for A/B review.
 * ``--set KEY=VALUE`` overrides any config value for this run, e.g.
   ``--set wan2gp.default_steps=8`` (repeatable; values parse as YAML).
   ``--base-resolution N`` is shorthand for ``--set wan2gp.base_resolution=N``
@@ -62,9 +64,10 @@ from lazycomics.config import cfg_get, load_config  # noqa: E402
 
 from contact_sheet import write_sheets  # noqa: E402  (sibling script in tools/)
 
-FIXTURES = REPO / "tests" / "fixtures" / "integration"
+FIXTURES = REPO / "tests" / "e2e" / "fixtures"
 GOLDEN_CBML = FIXTURES / "golden.cbml"
 FROZEN_PROMPTS = FIXTURES / "golden_prompts"
+RUNS = REPO / "tests" / "e2e" / "outputs" / "golden"  # gitignored
 
 # Golden page -> where it comes from in story.cbml and what it covers
 # (Docs/PLAN.md problem numbers).
@@ -79,9 +82,9 @@ GOLDEN_PAGES = {
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    out = Path(args.out).resolve()
+    out = _run_dir(args.out)
     # Loaded first so a bad --baseline fails before a 10-minute generation.
-    baseline = lc.load_project(Path(args.baseline).resolve() / "project") if args.baseline else None
+    baseline = lc.load_project(_run_dir(args.baseline) / "project") if args.baseline else None
 
     config = copy.deepcopy(load_config(REPO / "lazycomics_config.yaml"))
     overrides = list(args.set)
@@ -132,11 +135,12 @@ def main(argv: list[str] | None = None) -> int:
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--out", default=str(REPO / "golden_output"))
+    ap.add_argument("--out", default="latest",
+                    help=f"run name (a folder in {RUNS.relative_to(REPO)}) or a path")
     ap.add_argument("--force", action="store_true", help="regenerate every golden panel")
     ap.add_argument("--no-generate", action="store_true", help="never start Wan2GP")
     ap.add_argument("--base-resolution", type=int, help="override wan2gp.base_resolution")
-    ap.add_argument("--baseline", help="another golden --out dir to compare against")
+    ap.add_argument("--baseline", help="another run's name or path, to compare against")
     prompts = ap.add_mutually_exclusive_group()
     prompts.add_argument("--fresh-prompts", action="store_true", help="skip the frozen prompts")
     prompts.add_argument("--refine", action="store_true",
@@ -144,6 +148,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                     help="override a config value, e.g. wan2gp.default_steps=8 (repeatable)")
     return ap.parse_args(argv)
+
+
+def _run_dir(arg: str) -> Path:
+    """A bare name is a run folder under ``RUNS``; anything else is a path."""
+    p = Path(arg)
+    return RUNS / arg if len(p.parts) == 1 and not p.is_absolute() else p.resolve()
 
 
 def _override(config: dict, item: str) -> None:
