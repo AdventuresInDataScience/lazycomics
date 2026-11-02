@@ -199,6 +199,20 @@ _EXPECTED_KEYS = [
     "wan2gp.inpaint_mask_expand",
     "wan2gp.inpaint_mask_feather",
     "wan2gp.nag_scale",
+    # ai_toolkit_bridge.py
+    "ai_toolkit.root",
+    "ai_toolkit.python_bin",
+    "ai_toolkit.arch",
+    "ai_toolkit.name_or_path",
+    "ai_toolkit.steps",
+    "ai_toolkit.rank",
+    "ai_toolkit.learning_rate",
+    "ai_toolkit.resolutions",
+    "ai_toolkit.save_every",
+    "ai_toolkit.quantize",
+    "ai_toolkit.low_vram",
+    "ai_toolkit.layer_offloading",
+    "ai_toolkit.lora_weight",
 ]
 
 
@@ -287,3 +301,21 @@ def test_repo_config_refs_defaults_match_module_defaults():
     assert cfg_get(cfg, "refs.characters_first") == rp._DEFAULT_CHARACTERS_FIRST
     assert cfg_get(cfg, "refs.closeup_location") == rp._DEFAULT_CLOSEUP_LOCATION
     assert cfg_get(cfg, "refs.max_refs") == rp._DEFAULT_MAX_REFS
+
+
+def test_repo_config_ai_toolkit_defaults_match_module_defaults():
+    """Sample values for ``ai_toolkit.*`` must equal the trainer's fallbacks."""
+    from lazycomics import ai_toolkit_bridge as at  # noqa: PLC0415
+
+    cfg = load_config(_REPO_CONFIG)
+    assert cfg_get(cfg, "ai_toolkit.arch") == at._DEFAULT_ARCH
+    assert cfg_get(cfg, "ai_toolkit.name_or_path") == at._DEFAULT_NAME_OR_PATH
+    assert cfg_get(cfg, "ai_toolkit.steps") == at._DEFAULT_STEPS
+    assert cfg_get(cfg, "ai_toolkit.rank") == at._DEFAULT_RANK
+    assert cfg_get(cfg, "ai_toolkit.learning_rate") == at._DEFAULT_LEARNING_RATE
+    assert cfg_get(cfg, "ai_toolkit.resolutions") == at._DEFAULT_RESOLUTIONS
+    assert cfg_get(cfg, "ai_toolkit.save_every") == at._DEFAULT_SAVE_EVERY
+    assert cfg_get(cfg, "ai_toolkit.quantize") == at._DEFAULT_QUANTIZE
+    assert cfg_get(cfg, "ai_toolkit.low_vram") == at._DEFAULT_LOW_VRAM
+    assert cfg_get(cfg, "ai_toolkit.layer_offloading") == at._DEFAULT_LAYER_OFFLOADING
+    assert cfg_get(cfg, "ai_toolkit.lora_weight") == at._DEFAULT_LORA_WEIGHT

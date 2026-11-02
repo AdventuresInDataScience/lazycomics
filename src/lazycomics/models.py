@@ -171,7 +171,7 @@ class PanelGenerationRequest:
     panel_context: dict[str, Any] = field(default_factory=dict)      # deferred: populate when a consumer arrives
 
     pose_ref: Path | None = None                                     # deferred: populate when ControlNet integration lands
-    lora_stack: list[LoRAConfig] = field(default_factory=list)       # deferred: populate when ai_toolkit_bridge lands
+    lora_stack: list[LoRAConfig] = field(default_factory=list)       # deferred: unused; ai_toolkit_bridge attaches LoRAs per character (CharacterRef.lora)
 
     # The pipeline caches prompts as <id>.txt / <id>.neg.txt files. These
     # in-dataclass slots are for the generation bridge to use when it stops

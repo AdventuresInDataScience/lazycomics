@@ -38,6 +38,7 @@ from lazycomics.wan2gp_bridge import (  # noqa: E402
     _read_prompt,
     _warn_on_size_mismatch,
     _WAN2GP_SETTINGS_VERSION,
+    generate_images,
     generate_panels,
 )
 
@@ -504,7 +505,7 @@ def test_collect_outputs_pairs_by_name_not_position(env):
         _wgp_jpeg(out_dir / "page_1_panel_2.jpg", colour=(200, 0, 0))
         _wgp_jpeg(out_dir / "page_1_panel_10.jpg", colour=(0, 0, 200))
 
-        results = _collect_outputs(out_dir, ["page_1_panel_2", "page_1_panel_10"], env.project)
+        results = _collect_outputs(out_dir, ["page_1_panel_2", "page_1_panel_10"], env.project.panels_dir)
 
         assert set(results) == {"page_1_panel_2", "page_1_panel_10"}
         assert _red(env.project.panels_dir / "page_1_panel_2.png") > 150
@@ -523,7 +524,7 @@ def test_collect_outputs_skipped_task_shifts_nothing(env):
         _wgp_jpeg(out_dir / "p2.jpg", colour=(0, 0, 200))
         buf = io.StringIO()
         with redirect_stdout(buf):
-            results = _collect_outputs(out_dir, ["p1", "p2"], env.project)
+            results = _collect_outputs(out_dir, ["p1", "p2"], env.project.panels_dir)
 
         assert set(results) == {"p2"}
         assert not (env.project.panels_dir / "p1.png").exists()
@@ -537,7 +538,7 @@ def test_collect_outputs_ignores_the_queue_cache(env):
         out_dir = Path(out_dir)
         (out_dir / "_loaded_queue_cache").mkdir()
         _wgp_jpeg(out_dir / "_loaded_queue_cache" / "p1.jpg")  # an input, not an output
-        assert _collect_outputs(out_dir, ["p1"], env.project) == {}
+        assert _collect_outputs(out_dir, ["p1"], env.project.panels_dir) == {}
 
 
 @_with_env
@@ -548,7 +549,7 @@ def test_collect_outputs_writes_real_png_keeping_wgp_settings(env):
     with tempfile.TemporaryDirectory() as out_dir:
         out_dir = Path(out_dir)
         _wgp_jpeg(out_dir / "p1.jpg", settings=settings)
-        _collect_outputs(out_dir, ["p1"], env.project)
+        _collect_outputs(out_dir, ["p1"], env.project.panels_dir)
 
     dst = env.project.panels_dir / "p1.png"
     assert dst.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
@@ -575,7 +576,7 @@ def test_collect_outputs_warns_when_output_size_wrong(env):
         buf = io.StringIO()
         with redirect_stdout(buf):
             _collect_outputs(
-                out_dir, ["p1", "p2"], env.project,
+                out_dir, ["p1", "p2"], env.project.panels_dir,
                 {"p1": "448x1024", "p2": "448x1024"},
             )
         warnings = [l for l in buf.getvalue().splitlines() if "WARNING" in l]
@@ -664,6 +665,48 @@ def test_generate_panels_subprocess_failure_raises(env):
 def test_generate_panels_no_enriched_returns_empty(env):
     results = generate_panels(env.project, config=_base_config())
     assert results == {}
+
+
+# ---------------------------------------------------------------------------
+# generate_images (stand-alone images, e.g. LoRA training sets)
+# ---------------------------------------------------------------------------
+
+
+def test_task_seed_override():
+    raw = _base_config()
+    raw["wan2gp"]["seed"] = 42
+    cfg = _load_bridge_config(raw)
+    assert _build_wangp_task({}, "x", "", [], "1024x1024", cfg)["seed"] == 42
+    assert _build_wangp_task({}, "x", "", [], "1024x1024", cfg, seed=7)["seed"] == 7
+
+
+@_with_env
+def test_generate_images_writes_named_pngs_into_out_dir(env):
+    ref = env.root / "ref.png"
+    ref.write_bytes(b"fakepng")
+    out_dir = env.root / "dataset"
+    log = []
+    images = [
+        {"name": "A_01", "prompt": "a", "aspect_ratio": 1.0, "refs": [ref], "seed": 43},
+        {"name": "A_02", "prompt": "b", "aspect_ratio": 0.75, "negative_prompt": "neg"},
+    ]
+    with mock.patch("lazycomics.wan2gp_bridge.subprocess.run", side_effect=_fake_wgp(log=log)):
+        results = generate_images(images, out_dir, config=_base_config())
+
+    assert set(results) == {"A_01", "A_02"}
+    assert all(p.parent == out_dir and p.read_bytes()[:4] == b"\x89PNG" for p in results.values())
+    first, second = log[0]
+    assert first["output_filename"] == "A_01" and first["seed"] == 43
+    assert first["resolution"] == "1024x1024" and len(first["image_refs"]) == 1
+    assert second["resolution"] == "768x1024" and second["negative_prompt"] == "neg"
+    assert second["seed"] == -1  # wan2gp.seed is null in _base_config
+    assert not (env.project.panels_dir / "A_01.png").exists()
+
+
+def test_generate_images_with_nothing_to_do_never_starts_wgp():
+    with mock.patch("lazycomics.wan2gp_bridge.subprocess.run") as run:
+        assert generate_images([], Path("unused"), config=_base_config()) == {}
+    run.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -757,18 +800,51 @@ def test_ensure_lora_copies_file():
         assert dst.read_bytes() == b"weights"
 
 
-def test_ensure_lora_skips_existing_same_size():
+def test_ensure_lora_skips_an_identical_copy():
+    import shutil
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         src = tmp / "test.safetensors"
         src.write_bytes(b"weights")
         loras_dir = tmp / "loras"
         loras_dir.mkdir()
-        existing = loras_dir / "test.safetensors"
-        existing.write_bytes(b"weights")  # same size
+        shutil.copy2(src, loras_dir / "test.safetensors")  # same size and mtime
+
+        with mock.patch("lazycomics.wan2gp_bridge.shutil.copy2") as copy:
+            dst = _ensure_lora(src, loras_dir)
+        assert dst == loras_dir / "test.safetensors"
+        copy.assert_not_called()
+
+
+def test_ensure_lora_recopies_a_retrained_lora_of_the_same_size():
+    # A retrained LoRA (same rank) is byte-for-byte the same size as the old
+    # one; a size-only check kept serving the old weights to Wan2GP.
+    import os
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        loras_dir = tmp / "loras"
+        loras_dir.mkdir()
+        old = loras_dir / "test.safetensors"
+        old.write_bytes(b"weights-1")
+        os.utime(old, (1_000_000, 1_000_000))
+        src = tmp / "test.safetensors"
+        src.write_bytes(b"weights-2")
 
         dst = _ensure_lora(src, loras_dir)
-        assert dst == existing
+        assert dst.read_bytes() == b"weights-2"
+
+
+def test_config_loras_dir_defaults_to_the_architecture_folder():
+    # wgp only finds a Klein 9B LoRA in loras/flux2_klein_9b/; elsewhere the
+    # task fails validation and is skipped (flux_handler.get_lora_dir).
+    cfg = _load_bridge_config(_base_config())
+    assert cfg["loras_dir"] == cfg["wgp_root"] / "loras" / "flux2_klein_9b"
+
+
+def test_config_loras_dir_override():
+    raw = _base_config()
+    raw["wan2gp"]["loras_dir"] = "/somewhere/else"
+    assert _load_bridge_config(raw)["loras_dir"] == Path("/somewhere/else").resolve()
 
 
 # ---------------------------------------------------------------------------

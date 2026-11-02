@@ -17,8 +17,10 @@ layer.
 
 The full pipeline runs end-to-end: CBML → Wan2GP-generated panels (Flux 2
 Klein) → lettered pages → `.cbz`. Characters stay consistent across the test
-story's 33 panels. Next: LoRA training (not built yet), then lettering and
-generation polish.
+story's 33 panels, from reference images and descriptions alone. Next:
+lettering and generation polish. Per-character LoRA training (AI Toolkit) is
+built but parked: the pipeline aims for consistency without LoRAs, to avoid
+the training cost.
 
 See [`Docs/PLAN.md`](Docs/PLAN.md) for what works, what doesn't, and
 what's next.
@@ -62,6 +64,13 @@ cc.register_style(
     prompt_prefix="silver age comic art, bold inks",
     reference_images=["style_ref.png"],
 )
+
+# 2b. (Optional) Train a character LoRA (needs the `wan2gp:` and
+#     `ai_toolkit:` paths in lazycomics_config.yaml). Wan2GP draws the
+#     character in varied shots; hand-pick, then AI Toolkit trains and the
+#     LoRA is attached to the character. Or: tools/train_lora.py.
+# cc.generate_training_set(project, "NOVA")
+# cc.train_character_lora(project, "NOVA")
 
 # 3. CBML → enriched per-panel JSON
 cc.enrich(project)
@@ -125,7 +134,7 @@ projects/my_comic/
 ├── source.cbml          # copy of the input
 ├── manifest.json        # {"name": "my_comic"}
 ├── assets/              # registered characters / style / locations
-│   ├── characters/<NAME>/{meta.json, references/, lora.safetensors}
+│   ├── characters/<NAME>/{meta.json, references/, lora_dataset/, lora/}
 │   ├── style/{meta.json, references/, lora.safetensors}
 │   └── locations/<NAME>/{meta.json, references/}
 ├── enriched/            # one .json per panel
@@ -156,7 +165,8 @@ tests/
     │   ├── golden/<name>/        tools/golden_run.py --out <name>
     │   └── live/, live_queue/    the smoke tests
     └── archived_test_outputs/    gitignored; old runs kept on purpose, date-prefixed
-tools/                        golden_run.py, contact_sheet.py, profile_architectures.py
+tools/                        golden_run.py, contact_sheet.py, train_lora.py,
+                              profile_architectures.py
 ```
 
 ```bash
@@ -165,6 +175,7 @@ python tests/e2e/test_wan2gp_live_queue.py          # bridge smoke test, minutes
 python tools/golden_run.py --force --out NAME --baseline w4_prompts   # golden subset, ~10 min
 pytest tests/e2e/test_integration_e2e.py -v -s      # full e2e, 30+ min
 python tools/contact_sheet.py tests/e2e/outputs/e2e # sheets + checks for any project
+python tools/train_lora.py dataset|train PROJECT_DIR CHARACTER   # LoRA training set, then LoRA
 ```
 
 To keep a run, move its folder into `tests/e2e/archived_test_outputs/`

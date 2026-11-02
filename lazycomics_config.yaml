@@ -176,9 +176,11 @@ wan2gp:
   # Extra CLI flags passed to wgp.py (e.g. ["--attention", "sdpa"]).
   cli_args: []
 
-  # Directory where Wan2GP looks for LoRA files. Defaults to
-  # <wgp_root>/loras if not set. LoRA .safetensors registered in
-  # lazycomics are auto-copied here so the headless CLI can find them.
+  # Directory where Wan2GP looks for this architecture's LoRA files.
+  # Defaults to <wgp_root>/loras/<architecture> if not set (Wan2GP keeps one
+  # folder per model, e.g. loras/flux2_klein_9b; a LoRA anywhere else fails
+  # its validation and the panel is skipped). LoRA .safetensors registered
+  # in lazycomics are auto-copied here so the headless CLI can find them.
   loras_dir: null
 
   # Inpaint settings (multi-character panels: a base pass paints the primary
@@ -199,6 +201,57 @@ wan2gp:
   #   inpaint into the surrounding art instead of leaving a hard seam. 0
   #   disables feathering (hard rounded edge).
   inpaint_mask_feather: 0.04
+
+
+# ---------------------------------------------------------------------------
+# AI Toolkit LoRA training  (src/lazycomics/ai_toolkit_bridge.py)
+# ---------------------------------------------------------------------------
+# Required for `train_character_lora()` (`generate_training_set()` only needs
+# the wan2gp section). Like wan2gp, `root` and `python_bin` point at the
+# Pinokio install and have no fallback defaults.
+#
+# The base model below is gated on Hugging Face: accept its licence on the
+# model page, then give AI Toolkit a token (HF_TOKEN in the environment or
+# in <root>/.env, or `hf auth login`). The first run downloads it (~18 GB)
+# plus Qwen3-8B (~16 GB).
+ai_toolkit:
+  # AI Toolkit repo root inside Pinokio (the folder with run.py).
+  root: C:\pinokio\api\ai-toolkit.git\app
+
+  # Python binary inside AI Toolkit's Pinokio-managed env.
+  python_bin: C:\pinokio\api\ai-toolkit.git\app\env\Scripts\python.exe
+
+  # AI Toolkit model arch, and the model it trains on. Klein LoRAs train on
+  # the undistilled base; Wan2GP's distilled Klein 9B shares its
+  # architecture, so the LoRA applies there. `name_or_path` may also be a
+  # local folder holding flux-2-klein-base-9b.safetensors.
+  arch: flux2_klein_9b
+  name_or_path: black-forest-labs/FLUX.2-klein-base-9B
+
+  # Training length, LoRA rank (alpha = rank) and learning rate. A
+  # checkpoint is saved every `save_every` steps (the last 4 are kept), so
+  # an earlier step can be A/B'd if the final one overfits.
+  steps: 2000
+  rank: 16
+  learning_rate: 0.0001
+  save_every: 250
+
+  # Training resolutions (AI Toolkit buckets each image to the nearest).
+  # Drop 1024 first if a run runs out of VRAM.
+  resolutions: [512, 768, 1024]
+
+  # VRAM. AI Toolkit's own Klein 9B preset, for a 16 GB GPU: 8-bit
+  # transformer + text encoder (`quantize`), models kept off the GPU while
+  # loading (`low_vram`). The text encoder's outputs are cached and the
+  # encoder unloaded before training starts. `layer_offloading: true` swaps
+  # transformer blocks through RAM: slower, for when even that won't fit.
+  quantize: true
+  low_vram: true
+  layer_offloading: false
+
+  # LoRA weight `train_character_lora` registers (set_lora), i.e. the
+  # strength Wan2GP applies it at. AI Toolkit trains at 1.0.
+  lora_weight: 1.0
 
 
 # ---------------------------------------------------------------------------

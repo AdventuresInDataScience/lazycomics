@@ -349,3 +349,20 @@ def testpanel_sort_key_orders_pages_numerically():
     assert sorted(ids, key=review.panel_sort_key) == [
         "page_2_panel_1", "page_2_panel_2", "page_2_panel_10", "page_10_panel_1",
     ]
+
+
+def test_dataset_sheet_wraps_into_rows():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        images = []
+        for i in range(9):
+            p = tmp / f"GERALD_{i:02d}.png"
+            Image.new("RGB", (100, 100), (i * 20, 0, 0)).save(p)
+            images.append(p)
+        out = review.dataset_sheet(images, tmp / "sheet.png", title="GERALD", per_row=4, tile_h=50)
+        with Image.open(out) as sheet:
+            # 3 rows of 4, 4, 1 tiles: wider than 4 tiles, taller than 3 rows of tiles.
+            assert sheet.width >= 4 * 50 and sheet.height > 3 * 50
+        empty = review.dataset_sheet([], tmp / "empty.png", title="none yet")
+        with Image.open(empty) as sheet:
+            assert sheet.size[0] > 0

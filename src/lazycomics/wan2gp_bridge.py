@@ -59,7 +59,7 @@ from lazycomics.config import cfg_get, load_config
 from lazycomics.geometry import resolution_for_aspect
 from lazycomics.models import Project
 
-__all__ = ["generate_panels"]
+__all__ = ["generate_panels", "generate_images"]
 
 
 # ---------------------------------------------------------------------------
@@ -160,19 +160,7 @@ def generate_panels(
             f"{', '.join(single_ids)}",
             flush=True,
         )
-        with tempfile.TemporaryDirectory(prefix="lazycomics_wgp_") as tmpdir:
-            tmp = Path(tmpdir)
-            queue_path = tmp / "queue.zip"
-            wgp_output = tmp / "output"
-            wgp_output.mkdir()
-            _build_queue_zip(single_tasks, queue_path)
-            try:
-                _run_wangp(queue_path, wgp_output, bridge_cfg)
-            finally:
-                # Outputs are named per panel, so the panels that did finish
-                # are kept even when a later task fails and wgp exits non-zero.
-                requested = {pid: t["resolution"] for pid, t in zip(single_ids, single_tasks)}
-                results.update(_collect_outputs(wgp_output, single_ids, project, requested))
+        _run_batch(single_tasks, single_ids, project.panels_dir, bridge_cfg, results)
 
     # --- Sequential: each multi-inpaint panel runs base + N inpaint passes ---
     for pid, panel in multi_panels:
@@ -187,6 +175,77 @@ def generate_panels(
             results[pid] = result_path
 
     return results
+
+
+def generate_images(
+    images: list[dict[str, Any]],
+    out_dir: Path,
+    *,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Path]:
+    """Generate stand-alone images (not panels) in one Wan2GP batch.
+
+    Each item is a dict with ``name`` (the output file's stem), ``prompt``
+    and ``aspect_ratio``, and optionally ``refs`` (image paths, primary
+    first), ``negative_prompt`` and ``seed`` (default ``wan2gp.seed``).
+    Writes ``<out_dir>/<name>.png``, as :func:`generate_panels` writes
+    panels, and returns ``{name: path}`` for every image wgp produced; a
+    missing one is reported and left out. Always generates (no skip).
+
+    ``ai_toolkit_bridge.generate_training_set`` uses it for a character's
+    LoRA training images.
+    """
+    if config is None:
+        config = load_config()
+    bridge_cfg = _load_bridge_config(config)
+
+    tasks = [
+        _build_wangp_task(
+            panel_data={},
+            prompt=item["prompt"],
+            negative_prompt=item.get("negative_prompt", ""),
+            refs=[Path(r) for r in item.get("refs") or []],
+            resolution=_compute_resolution(
+                float(item.get("aspect_ratio") or 1.0), bridge_cfg["base_resolution"],
+            ),
+            bridge_cfg=bridge_cfg,
+            output_name=item["name"],
+            seed=item.get("seed"),
+        )
+        for item in images
+    ]
+    results: dict[str, Path] = {}
+    if tasks:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[wan2gp] > batch of {len(tasks)} image(s) -> {out_dir}", flush=True)
+        _run_batch(tasks, [item["name"] for item in images], out_dir, bridge_cfg, results)
+    return results
+
+
+def _run_batch(
+    tasks: list[dict[str, Any]],
+    names: list[str],
+    out_dir: Path,
+    bridge_cfg: dict[str, Any],
+    results: dict[str, Path],
+) -> None:
+    """Run ``tasks`` as one wgp queue; add each output to ``results`` by name.
+
+    Outputs are named per task, so the ones that did finish are kept (and
+    added to ``results``) even when a later task fails and wgp exits
+    non-zero; the ``RuntimeError`` still propagates.
+    """
+    with tempfile.TemporaryDirectory(prefix="lazycomics_wgp_") as tmpdir:
+        tmp = Path(tmpdir)
+        queue_path = tmp / "queue.zip"
+        wgp_output = tmp / "output"
+        wgp_output.mkdir()
+        _build_queue_zip(tasks, queue_path)
+        try:
+            _run_wangp(queue_path, wgp_output, bridge_cfg)
+        finally:
+            requested = {name: t["resolution"] for name, t in zip(names, tasks)}
+            results.update(_collect_outputs(wgp_output, names, out_dir, requested))
 
 
 def _build_panel_task(
@@ -347,7 +406,8 @@ def _run_single_task_and_collect(
         except RuntimeError as e:
             print(f"[wan2gp]   ERROR: {e}")
             return None
-        collected = _collect_outputs(wgp_output, [pid], project, {pid: task["resolution"]})
+        collected = _collect_outputs(wgp_output, [pid], project.panels_dir,
+                                     {pid: task["resolution"]})
         return collected.get(pid)
 
 
@@ -397,19 +457,23 @@ def _load_bridge_config(config: dict[str, Any]) -> dict[str, Any]:
             "Wan2GP install path and Python env binary."
         )
 
+    architecture = cfg_get(config, "wan2gp.architecture", "flux2_klein_9b")
     return {
         "wgp_root": Path(wgp_root).expanduser().resolve(),
         "python_bin": Path(python_bin).expanduser().resolve(),
-        "architecture": cfg_get(config, "wan2gp.architecture", "flux2_klein_9b"),
+        "architecture": architecture,
         "default_steps": cfg_get(config, "wan2gp.default_steps", 4),
         "guidance_scale": cfg_get(config, "wan2gp.guidance_scale", 3.5),
         "video_prompt_type": cfg_get(config, "wan2gp.video_prompt_type", "I"),
         "base_resolution": cfg_get(config, "wan2gp.base_resolution", 1024),
         "seed": cfg_get(config, "wan2gp.seed", 42),
         "cli_args": cfg_get(config, "wan2gp.cli_args", []),
+        # wgp looks up a task's LoRAs in a per-model folder, loras/<model>/
+        # for the Klein models (flux_handler.get_lora_dir); a LoRA anywhere
+        # else fails validation and wgp skips the task.
         "loras_dir": Path(
             cfg_get(config, "wan2gp.loras_dir", "")
-            or str(Path(wgp_root).expanduser().resolve() / "loras")
+            or str(Path(wgp_root).expanduser().resolve() / "loras" / architecture)
         ).expanduser().resolve(),
         "inpaint_denoising": cfg_get(config, "wan2gp.inpaint_denoising", _DEFAULT_INPAINT_DENOISING),
         "inpaint_masking_strength": cfg_get(config, "wan2gp.inpaint_masking_strength", _DEFAULT_INPAINT_MASKING_STRENGTH),
@@ -434,6 +498,7 @@ def _build_wangp_task(
     activated_loras: list[str] | None = None,
     loras_multipliers: str = "",
     output_name: str = "",
+    seed: int | None = None,
 ) -> dict[str, Any]:
     """Construct one Wan2GP settings dict for a single panel.
 
@@ -446,8 +511,11 @@ def _build_wangp_task(
 
     ``output_name`` (the panel ID) becomes the output file's name, so
     :func:`_collect_outputs` can find each panel by name; ``""`` leaves
-    wgp's own ``<time>_seed<n>_<prompt>`` naming.
+    wgp's own ``<time>_seed<n>_<prompt>`` naming. ``seed`` overrides the
+    configured ``wan2gp.seed`` for this task.
     """
+    if seed is None:
+        seed = bridge_cfg["seed"]
     task: dict[str, Any] = {
         "model_type": bridge_cfg["architecture"],
         "image_mode": 1,
@@ -457,7 +525,7 @@ def _build_wangp_task(
         "num_inference_steps": bridge_cfg["default_steps"],
         "guidance_scale": bridge_cfg.get("guidance_scale", 5),
         "batch_size": 1,
-        "seed": bridge_cfg["seed"] if bridge_cfg["seed"] is not None else -1,
+        "seed": seed if seed is not None else -1,
         "activated_loras": activated_loras or [],
         "loras_multipliers": loras_multipliers,
         "settings_version": _WAN2GP_SETTINGS_VERSION,
@@ -796,11 +864,15 @@ def _collect_loras(
 def _ensure_lora(src: Path, loras_dir: Path) -> Path:
     """Copy a LoRA file into Wan2GP's loras dir if not already there.
 
-    Returns the destination path (always inside ``loras_dir``).
+    Returns the destination path (always inside ``loras_dir``). An existing
+    copy is kept only if its size and modification time match (``copy2``
+    keeps the mtime): a retrained LoRA has the same size as the old one.
     """
     dst = loras_dir / src.name
-    if dst.is_file() and dst.stat().st_size == src.stat().st_size:
-        return dst  # already present, skip copy
+    if dst.is_file():
+        s, d = src.stat(), dst.stat()
+        if (d.st_size, d.st_mtime_ns) == (s.st_size, s.st_mtime_ns):
+            return dst  # already present, skip copy
     loras_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
     print(f"[wan2gp] copied LoRA: {src.name} -> {loras_dir}")
@@ -910,10 +982,11 @@ def _run_wangp(
 def _collect_outputs(
     wgp_output_dir: Path,
     panel_ids: list[str],
-    project: Project,
+    out_dir: Path,
     resolutions: dict[str, str] | None = None,
 ) -> dict[str, Path]:
-    """Save each panel's generated image as ``panels/<panel_id>.png``.
+    """Save each panel's generated image as ``<out_dir>/<panel_id>.png``
+    (``panels/`` for panels).
 
     Every task names its output after its panel ID (``output_filename``),
     so outputs are matched by name. Pairing by sorted position went wrong
@@ -943,7 +1016,7 @@ def _collect_outputs(
             print(f"[wan2gp] WARNING: no output for {pid}; Wan2GP skipped or "
                   f"failed its task (see its log above)", flush=True)
             continue
-        dst = project.panels_dir / f"{pid}.png"
+        dst = out_dir / f"{pid}.png"
         _save_as_png(src, dst)
         results[pid] = dst
         print(f"[wan2gp] {pid} -> {dst.name}")

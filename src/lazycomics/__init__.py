@@ -19,7 +19,8 @@ from lazycomics.config import cfg_get, load_config
 from lazycomics.enricher import enrich
 from lazycomics.exporter import export_cbz
 from lazycomics.llm_refiner import refine_prompts_with_llm
-from lazycomics.wan2gp_bridge import generate_panels
+from lazycomics.wan2gp_bridge import generate_images, generate_panels
+from lazycomics.ai_toolkit_bridge import generate_training_set, train_character_lora
 from lazycomics.upscaler import upscale_pages
 from lazycomics.models import (
     BubbleRegion,
@@ -80,6 +81,10 @@ __all__ = [
     "assemble_pages",
     # wan2gp_bridge
     "generate_panels",
+    "generate_images",
+    # ai_toolkit_bridge
+    "generate_training_set",
+    "train_character_lora",
     # upscaler
     "upscale_pages",
     # exporter

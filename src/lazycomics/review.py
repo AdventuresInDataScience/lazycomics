@@ -9,10 +9,12 @@ issues per panel and (b) two contact-sheet PNGs for eyeballing:
   on the page (the slot-cropped part), plus the assembled page alongside, so
   cropping damage is visible at a glance;
 * **characters sheet** — per character, the reference beside a head crop
-  from every appearance (optionally over a baseline run's crops).
+  from every appearance (optionally over a baseline run's crops);
+* **dataset sheet** — a grid of named thumbnails, for hand-picking a LoRA
+  training set.
 
-``tools/golden_run.py`` and ``tools/contact_sheet.py`` drive it; nothing
-here touches a GPU.
+``tools/golden_run.py``, ``tools/contact_sheet.py`` and
+``tools/train_lora.py`` drive it; nothing here touches a GPU.
 
 Checks (``check_panel``), by ``Issue.kind``:
 
@@ -46,7 +48,8 @@ from PIL import Image, ImageDraw, ImageFont
 from lazycomics import face_detector
 from lazycomics.models import Project
 
-__all__ = ["Issue", "check_panel", "pages_sheet", "character_sheet", "panel_sort_key"]
+__all__ = ["Issue", "check_panel", "pages_sheet", "character_sheet", "dataset_sheet",
+           "panel_sort_key"]
 
 
 _ASPECT_TOL = 0.05
@@ -293,6 +296,24 @@ def character_sheet(
             header += "   (top: this run, bottom: baseline)"
         rows.append(_row(header, tiles, None))
     return _save(_stack(rows, gap=_GAP * 2), out_path)
+
+
+def dataset_sheet(
+    images: list[Path],
+    out_path: Path,
+    *,
+    title: str = "",
+    per_row: int = 7,
+    tile_h: int = 256,
+) -> Path:
+    """Every image as a thumbnail labelled with its file stem, ``per_row``
+    to a row, under ``title``: a LoRA training set to hand-pick from."""
+    rows = [
+        _row(title if i == 0 else "", [_tile(p, tile_h, p.stem) for p in images[i:i + per_row]], None)
+        for i in range(0, len(images), per_row)
+    ]
+    return _save(_stack(rows or [_row(title, [_tile(None, tile_h, "no images")], None)], gap=_GAP),
+                 out_path)
 
 
 def _appearance_tile(project: Project, pid: str, name: str, h: int, prefix: str = "") -> Image.Image:

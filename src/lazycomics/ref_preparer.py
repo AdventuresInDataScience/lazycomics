@@ -189,7 +189,7 @@ def _order_sources(
     """Every source for the panel, deduplicated, in the order the bridge sends them.
 
     Klein has no per-ref weight, so order and count are the only levers
-    (``Docs/PLAN.md`` W8.3). Default: primary (see
+    (``Docs/PLAN.md`` W10.3). Default: primary (see
     :func:`_select_primary_source`), style, location, other characters.
     ``characters_first`` puts every character (primary first) before style
     and location, wide shots included. ``closeup_location: false`` drops the

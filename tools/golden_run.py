@@ -6,6 +6,7 @@ Usage::
     python tools/golden_run.py [--out NAME] [--force] [--no-generate]
                                [--base-resolution N] [--baseline NAME]
                                [--fresh-prompts | --refine] [--set KEY=VALUE ...]
+                               [--lora CHARACTER=PATH ...]
 
 The golden subset is ``tests/e2e/fixtures/golden.cbml``: three page blocks
 cut from the e2e story (see ``GOLDEN_PAGES``) with the story's registered
@@ -41,6 +42,14 @@ Iterating:
   ``--set wan2gp.default_steps=8`` (repeatable; values parse as YAML).
   ``--base-resolution N`` is shorthand for ``--set wan2gp.base_resolution=N``
   (e.g. 768 for a faster loop). Combine either with ``--force``.
+* ``--lora CHARACTER=PATH`` attaches a trained LoRA (``tools/train_lora.py``)
+  to that character for this run, at ``ai_toolkit.lora_weight`` (so
+  ``--set ai_toolkit.lora_weight=0.8`` A/Bs the weight), trigger word = the
+  character's ID. Repeatable. Under the default
+  ``enricher.multi_char_strategy: auto``, that character's multi-character
+  panels go down the inpaint path, whose settings don't reach Wan2GP yet
+  (Docs/PLAN.md problem 6): add ``--set enricher.multi_char_strategy=single``
+  or judge solo panels only.
 """
 
 from __future__ import annotations
@@ -92,8 +101,12 @@ def main(argv: list[str] | None = None) -> int:
         overrides.append(f"wan2gp.base_resolution={args.base_resolution}")
     for item in overrides:
         _override(config, item)
+    loras = [_lora_arg(item) for item in args.lora]  # checked before any work
 
     project = _open_project(out / "project")
+    for name, path in loras:
+        lc.set_lora(project, "character", name, path,
+                    weight=cfg_get(config, "ai_toolkit.lora_weight", 1.0), trigger_word=name)
     panels = sorted((p.panel_id for p in lc.enrich(project, config=config)),
                     key=review.panel_sort_key)
     lc.build_prompts(project)
@@ -147,7 +160,18 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                          help="fresh prompts refined by the LLM (llm.* config)")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                     help="override a config value, e.g. wan2gp.default_steps=8 (repeatable)")
+    ap.add_argument("--lora", action="append", default=[], metavar="CHARACTER=PATH",
+                    help="attach a trained LoRA to a character for this run (repeatable)")
     return ap.parse_args(argv)
+
+
+def _lora_arg(item: str) -> tuple[str, Path]:
+    """``CHARACTER=PATH`` -> (character, resolved path); the file must exist."""
+    name, sep, raw = item.partition("=")
+    path = Path(raw).expanduser().resolve()
+    if not sep or not name or not path.is_file():
+        raise SystemExit(f"--lora wants CHARACTER=PATH to an existing file, got {item!r}")
+    return name, path
 
 
 def _run_dir(arg: str) -> Path:
