@@ -1,0 +1,360 @@
+{
+ "_about": "Hand labels for attribution (tools/lettering_bench.py): per panel image (SHA-1 of panels/<id>.png), the face box each visible character has, judged by eye on 2026-11-02. A panel character with no entry isn't visible. Only these exact images are scored.",
+ "b48ca868686d5cef30266a10f83a060c0c850236": {
+  "panel": "e2e run 2026-11-01, page_10_panel_1",
+  "who": {
+   "DAVID": [
+    39,
+    445,
+    86,
+    504
+   ],
+   "RANJEET": [
+    165,
+    446,
+    210,
+    506
+   ]
+  }
+ },
+ "259925669641c507446f12a5d33f4db92c9eb82a": {
+  "panel": "e2e run 2026-11-01, page_10_panel_3",
+  "who": {
+   "GERALD": [
+    52,
+    444,
+    100,
+    503
+   ],
+   "YUKI": [
+    151,
+    446,
+    198,
+    503
+   ]
+  }
+ },
+ "25a25d5cb75812ab0feee3c54624dfea37798a87": {
+  "panel": "e2e run 2026-11-01, page_2_panel_1",
+  "who": {
+   "GERALD": [
+    465,
+    202,
+    527,
+    289
+   ]
+  }
+ },
+ "f6c3a77ac870c66fc2db63310b707160a359ebf7": {
+  "panel": "e2e run 2026-11-01, page_2_panel_2",
+  "who": {
+   "YUKI": [
+    128,
+    329,
+    216,
+    431
+   ],
+   "GERALD": [
+    244,
+    442,
+    317,
+    547
+   ]
+  }
+ },
+ "3228b10e2181a9db493db92ad8e4ce5ffa0c8981": {
+  "panel": "e2e run 2026-11-01, page_2_panel_3",
+  "who": {
+   "RANJEET": [
+    83,
+    346,
+    160,
+    449
+   ],
+   "GERALD": [
+    300,
+    371,
+    362,
+    458
+   ]
+  }
+ },
+ "fe8fc5de108117de57220bac6d8ce687f696f265": {
+  "panel": "e2e run 2026-11-01, page_3_panel_1",
+  "who": {
+   "YUKI": [
+    570,
+    494,
+    663,
+    613
+   ],
+   "GERALD": [
+    246,
+    583,
+    300,
+    669
+   ]
+  }
+ },
+ "54b8c8c2aa2b954d28c36f36b6d5a9c59133e5b4": {
+  "panel": "e2e run 2026-11-01, page_4_panel_3",
+  "who": {
+   "GERALD": [
+    391,
+    241,
+    463,
+    334
+   ],
+   "YUKI": [
+    581,
+    284,
+    648,
+    366
+   ],
+   "RANJEET": [
+    755,
+    280,
+    819,
+    368
+   ]
+  }
+ },
+ "501f207e0bdecd768e5009549ce7181deecdeeb6": {
+  "panel": "e2e run 2026-11-01, page_5_panel_1",
+  "who": {}
+ },
+ "a15b6d8b01bd22ba416ae465f15e09b84faf80ba": {
+  "panel": "e2e run 2026-11-01, page_5_panel_2",
+  "who": {
+   "YUKI": [
+    256,
+    278,
+    385,
+    483
+   ],
+   "GERALD": [
+    644,
+    234,
+    802,
+    456
+   ]
+  }
+ },
+ "d6a20818ad00452e3de687f3acb70e9adb3eb868": {
+  "panel": "e2e run 2026-11-01, page_5_panel_4",
+  "who": {
+   "GERALD": [
+    259,
+    98,
+    361,
+    230
+   ],
+   "YUKI": [
+    706,
+    118,
+    806,
+    256
+   ]
+  }
+ },
+ "b66feea2a1e0afded332f523a56cc44f1b44aad2": {
+  "panel": "e2e run 2026-11-01, page_7_panel_5",
+  "who": {
+   "YUKI": [
+    676,
+    243,
+    770,
+    364
+   ]
+  }
+ },
+ "2cee789af351766911ff88c84edcb33d8273a187": {
+  "panel": "e2e run 2026-11-01, page_8_panel_1",
+  "who": {
+   "GERALD": [
+    229,
+    271,
+    302,
+    380
+   ],
+   "DAVID": [
+    662,
+    220,
+    745,
+    344
+   ]
+  }
+ },
+ "f07044f12de3aa90c1639bde58b7c4a73caab1ca": {
+  "panel": "e2e run 2026-11-01, page_8_panel_2",
+  "who": {
+   "GERALD": [
+    186,
+    191,
+    286,
+    341
+   ],
+   "YUKI": [
+    564,
+    253,
+    649,
+    366
+   ],
+   "RANJEET": [
+    771,
+    190,
+    859,
+    315
+   ]
+  }
+ },
+ "5315d1d6595047085044b75a42dddfec1e5e74e6": {
+  "panel": "e2e run 2026-11-01, page_8_panel_4",
+  "who": {
+   "GERALD": [
+    162,
+    253,
+    234,
+    347
+   ],
+   "DAVID": [
+    367,
+    231,
+    438,
+    329
+   ],
+   "YUKI": [
+    627,
+    280,
+    690,
+    366
+   ],
+   "RANJEET": [
+    807,
+    242,
+    877,
+    337
+   ]
+  }
+ },
+ "ec8aee36bede78d1697383e4c7bb6f2849b9fe5a": {
+  "panel": "golden run w4_prompts, page_1_panel_1",
+  "who": {
+   "GERALD": [
+    255,
+    318,
+    350,
+    441
+   ],
+   "YUKI": [
+    552,
+    470,
+    649,
+    589
+   ]
+  }
+ },
+ "3ba778eb3ec0402af6013dc3c2072dc223806f21": {
+  "panel": "golden run w4_prompts, page_2_panel_1",
+  "who": {
+   "GERALD": [
+    299,
+    175,
+    393,
+    322
+   ],
+   "DAVID": [
+    675,
+    197,
+    771,
+    333
+   ]
+  }
+ },
+ "7a7ab1753940c85f2e2aba48a598fb40f7c4b8b7": {
+  "panel": "golden run w4_prompts, page_2_panel_2",
+  "who": {
+   "GERALD": [
+    173,
+    184,
+    279,
+    343
+   ],
+   "YUKI": [
+    571,
+    260,
+    652,
+    369
+   ],
+   "RANJEET": [
+    769,
+    201,
+    854,
+    312
+   ]
+  }
+ },
+ "36680bdeed532a333370ee3202b735751d047a64": {
+  "panel": "golden run w4_prompts, page_2_panel_4",
+  "who": {
+   "GERALD": [
+    157,
+    233,
+    235,
+    328
+   ],
+   "DAVID": [
+    366,
+    224,
+    442,
+    327
+   ],
+   "YUKI": [
+    624,
+    274,
+    690,
+    365
+   ],
+   "RANJEET": [
+    801,
+    226,
+    878,
+    326
+   ]
+  }
+ },
+ "86c8a7e891c2c4622bb54bc4f65d92d29fb8ed05": {
+  "panel": "golden run w4_prompts, page_4_panel_1",
+  "who": {
+   "DAVID": [
+    39,
+    442,
+    90,
+    509
+   ],
+   "RANJEET": [
+    164,
+    443,
+    212,
+    506
+   ]
+  }
+ },
+ "cdc6020a728aeb88ced465b29775eacbf0a267e2": {
+  "panel": "golden run w4_prompts, page_4_panel_3",
+  "who": {
+   "GERALD": [
+    54,
+    449,
+    101,
+    506
+   ],
+   "YUKI": [
+    151,
+    466,
+    194,
+    516
+   ]
+  }
+ }
+}

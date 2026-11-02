@@ -569,6 +569,8 @@ def test_panel_slots_record_written(env):
     assert (y0, y1) == (0, 600) and 0 < x0 < x1 < 1200
     # Slot is 600x900 (2:3); the visible strip of a 600-tall panel is 400 wide.
     assert abs((x1 - x0) - 400) <= 2
+    # Each visible panel px lands on 1.5 page px (600 -> 900 tall).
+    assert rec["scale"] == 1.5
     # Nothing but page images in pages/ (the upscaler feeds it to Real-ESRGAN).
     assert all(p.suffix == ".png" for p in env.project.pages_dir.iterdir())
 

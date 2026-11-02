@@ -38,11 +38,14 @@ class _Env:
         self.slots: dict = {}
 
     def panel(self, pid: str, w: int, h: int, *, aspect: float, layout=None,
-              characters=None, lettered: bool = True, visible="whole", pages=None):
+              characters=None, lettered: bool = True, visible="whole", pages=None,
+              scale: float = 1.0):
         """Write a panel + its enriched JSON, lettered PNG, layout and slot record.
 
         ``visible="whole"`` records the whole panel as shown by its slot;
-        ``None`` writes no slot record (as if never assembled).
+        ``None`` writes no slot record (as if never assembled). Its page is
+        written 1000px tall unless one exists, so a tail's minimum size on
+        the page is 12px long and 6px wide at ``scale`` 1.
         """
         Image.new("RGB", (w, h), (90, 120, 150)).save(self.project.panels_dir / f"{pid}.png")
         (self.project.enriched_dir / f"{pid}.json").write_text(json.dumps({
@@ -57,8 +60,12 @@ class _Env:
             self.slots[pid] = {
                 "visible": [0, 0, w, h] if visible == "whole" else list(visible),
                 "pages": pages or [page],
+                "scale": scale,
             }
             (self.project.base_dir / "panel_slots.json").write_text(json.dumps(self.slots))
+            for n in pages or [page]:
+                if not (self.project.pages_dir / f"page_{n:03d}.png").is_file():
+                    self.page(n, h=1000)
 
     def page(self, n: int, w: int = 400, h: int = 600):
         Image.new("RGB", (w, h), (30, 30, 30)).save(self.project.pages_dir / f"page_{n:03d}.png")
@@ -78,17 +85,23 @@ def _with_env(fn):
     return wrapper
 
 
-def _bubble(line, rect, *, speaker="A", type_="speech", tail=True, anchor=None):
-    return {"line": line, "speaker": speaker, "type": type_, "rect": rect,
-            "anchor": anchor or [0, 0], "tail": tail}
+def _bubble(line, rect, *, speaker="A", type_="speech", tail=True, anchor=None,
+            no_tail="unmatched"):
+    """A layout-record bubble. ``tail=True`` gives it a 20x20px triangle off
+    the middle of its bottom edge; a dict is used as the tail as given."""
+    b = {"line": line, "speaker": speaker, "type": type_, "rect": rect,
+         "anchor": anchor or [0, 0], "tail": tail}
+    if tail is True:
+        cx, y = (rect[0] + rect[2]) // 2, rect[3]
+        b["tail"] = {"points": [[cx - 10, y], [cx + 10, y], [cx, y + 20]]}
+    elif not tail:
+        b["tail"], b["no_tail"] = None, no_tail
+    return b
 
 
-def _messages(env, pid):
-    return [str(i) for i in review.check_panel(env.project, pid)]
-
-
-def _kinds(env, pid):
-    return [i.kind for i in review.check_panel(env.project, pid)]
+def _messages(env, pid, *kinds):
+    """Issue messages for ``pid``, only of ``kinds`` if any are given."""
+    return [str(i) for i in review.check_panel(env.project, pid) if not kinds or i.kind in kinds]
 
 
 P = "page_1_panel_1"
@@ -102,9 +115,9 @@ P = "page_1_panel_1"
 @_with_env
 def test_clean_panel_has_no_issues(env):
     env.panel(P, 448, 1024, aspect=0.44, layout={
-        "size": [448, 1024],
-        "bubbles": [_bubble(0, [20, 20, 200, 80], tail=False, type_="shout"),
-                    _bubble(1, [20, 120, 200, 180], anchor=[100, 400])],
+        "size": [448, 1024], "font_px": 20,
+        "bubbles": [_bubble(0, [20, 20, 200, 80], type_="shout", anchor=[100, 400]),
+                    _bubble(1, [230, 120, 420, 180], anchor=[100, 400])],
         "faces": [[50, 350, 150, 450]],
     })
     assert review.check_panel(env.project, P) == []
@@ -128,7 +141,7 @@ def test_box_cut_off_by_slot_flagged(env):
                     _bubble(1, [250, 200, 500, 260], tail=False, type_="shout")],
         "captions": [[600, 20, 760, 60]],
     })
-    assert _messages(env, P) == [
+    assert _messages(env, P, "slot") == [
         "line 1 is cut off by its page slot (slot shows x 192-592, y 0-576)",
         "caption 1 is cut off by its page slot (slot shows x 192-592, y 0-576)",
     ]
@@ -149,7 +162,7 @@ def test_reversed_reading_order_flagged(env):
         _bubble(2, [700, 200, 890, 245], speaker="YUKI", tail=False, type_="shout"),
         _bubble(3, [140, 95, 360, 140], speaker="GERALD", tail=False, type_="shout"),
     ]})
-    assert _messages(env, P) == [
+    assert _messages(env, P, "order") == [
         "reading order: line 2 sits above line 1",
         "reading order: line 3 sits above line 2",
         "reading order: line 4 sits above line 3",
@@ -162,7 +175,7 @@ def test_same_row_right_to_left_flagged(env):
         _bubble(0, [600, 40, 900, 100], tail=False, type_="shout"),
         _bubble(1, [100, 50, 400, 110], tail=False, type_="shout"),   # same row, left
     ]})
-    assert _messages(env, P) == ["reading order: line 2 sits left of line 1 in the same row"]
+    assert _messages(env, P, "order") == ["reading order: line 2 sits left of line 1 in the same row"]
 
 
 @_with_env
@@ -171,7 +184,7 @@ def test_same_row_left_to_right_is_fine(env):
         _bubble(0, [100, 50, 400, 110], tail=False, type_="shout"),
         _bubble(1, [600, 40, 900, 100], tail=False, type_="shout"),
     ]})
-    assert review.check_panel(env.project, P) == []
+    assert _messages(env, P, "order") == []
 
 
 @_with_env
@@ -180,9 +193,11 @@ def test_overlaps_flagged(env):
         "bubbles": [_bubble(0, [100, 100, 400, 160], tail=False, type_="shout"),
                     _bubble(1, [300, 300, 600, 360], tail=False, type_="shout")],
         "captions": [[350, 320, 700, 380]],
-        "faces": [[120, 110, 180, 170]],
+        "sfx": [[600, 500, 760, 560]],
+        "faces": [[120, 110, 180, 170], [620, 490, 700, 570]],
     })
-    assert _messages(env, P) == ["overlap: line 2 and caption 1", "line 1 covers a face"]
+    assert _messages(env, P, "overlap", "face") == [
+        "overlap: line 2 and caption 1", "line 1 covers a face", "sfx 1 covers a face"]
 
 
 @_with_env
@@ -193,16 +208,96 @@ def test_corner_touch_not_flagged_as_overlap(env):
         _bubble(0, [113, 315, 204, 375], tail=False, type_="shout"),
         _bubble(1, [20, 368, 117, 407], tail=False, type_="shout"),
     ]})
-    assert review.check_panel(env.project, P) == []
+    assert _messages(env, P, "overlap") == []
 
 
 @_with_env
-def test_missing_tail_flagged_only_for_tailed_types(env):
+def test_missing_tail_reports_its_cause_for_every_type(env):
     env.panel(P, 1024, 768, aspect=1.33, layout={"bubbles": [
         _bubble(0, [100, 50, 400, 110], speaker="NOVA", tail=False),
-        _bubble(1, [100, 200, 400, 260], type_="shout", tail=False),
+        _bubble(1, [100, 200, 400, 260], type_="shout", tail=False, no_tail="type"),
+        _bubble(2, [100, 350, 400, 410], type_="thought", tail=False, no_tail="level"),
+        _bubble(3, [100, 500, 400, 560], type_="whisper", tail=False, no_tail=None),
     ]})
-    assert _messages(env, P) == ["line 1 (NOVA): no tail, speaker's face not found"]
+    assert _messages(env, P, "no_tail") == [
+        "line 1 (NOVA): no tail, speaker not matched to a face",
+        "line 2 (A): no tail, shouts and whispers get none",
+        "line 3 (A): no tail, bubble level with the speaker's face",
+        "line 4 (A): no tail, reason not recorded (re-run render_text)",
+    ]
+
+
+@_with_env
+def test_overflowing_dialogue_reported(env):
+    env.panel(P, 448, 1024, aspect=0.44, layout={"overflow": 1.31, "bubbles": []})
+    assert _messages(env, P, "overflow") == [
+        "too much dialogue for the panel: stacked, the bubbles need 131% of its height"]
+
+
+@_with_env
+def test_level_consecutive_bubbles_flagged_for_stagger(env):
+    # e2e page_3_panel_1: "I have seen worse crashes." and "Like 2008?" start
+    # at the same height, so Gerald's next line, stacked under his first,
+    # reads as part of it.
+    env.panel(P, 912, 1024, aspect=0.89, layout={"font_px": 31, "bubbles": [
+        _bubble(0, [380, 380, 750, 440], tail=False),
+        _bubble(1, [50, 697, 495, 755], tail=False),
+        _bubble(2, [550, 697, 740, 755], tail=False),
+        _bubble(3, [128, 772, 352, 830], tail=False),
+    ]})
+    assert _messages(env, P, "stagger") == [
+        "stagger: line 3 starts level with line 2 (0px lower, want 23+)"]
+
+
+@_with_env
+def test_tail_crossing_another_box_flagged(env):
+    # e2e page_3_panel_1: "Much earlier." sits under "I have seen worse
+    # crashes." and its tail runs up through it toward Gerald.
+    up = {"points": [[230, 772], [244, 772], [240, 730]]}
+    env.panel(P, 912, 1024, aspect=0.89, layout={
+        "bubbles": [_bubble(0, [50, 697, 495, 755], tail=False),
+                    _bubble(1, [128, 772, 352, 830], tail=up)],
+        "captions": [[20, 20, 200, 60]],
+    })
+    assert _messages(env, P, "tail_cross") == ["tail of line 2 crosses line 1"]
+
+
+@_with_env
+def test_thought_dots_crossing_a_box_flagged(env):
+    dots = {"root": [200, 110], "dots": [[200, 140, 8], [200, 170, 6]]}
+    env.panel(P, 1024, 768, aspect=1.33, layout={
+        "bubbles": [_bubble(0, [100, 50, 400, 110], type_="thought", tail=dots)],
+        "sfx": [[150, 165, 300, 200]],
+    })
+    assert _messages(env, P, "tail_cross") == ["tail of line 1 crosses sfx 1"]
+
+
+@_with_env
+def test_tail_too_small_on_the_page_flagged(env):
+    # A 14px-wide, 38px-long tail on a panel shown at 0.27 scale (the old
+    # 800px e2e pages) is ~4px wide on the page; at 1.0 it reads.
+    tail = {"points": [[193, 110], [207, 110], [200, 148]]}
+    layout = {"bubbles": [_bubble(0, [100, 50, 400, 110], tail=tail)]}
+    env.panel(P, 1024, 768, aspect=1.33, layout=layout, scale=0.27)
+    assert _messages(env, P, "tail_size") == [
+        "line 1: tail 10px long, 4px wide on the page (want 12+ and 6+)"]
+    env.panel(P, 1024, 768, aspect=1.33, layout=layout, scale=1.0)
+    assert _messages(env, P, "tail_size") == []
+
+
+def test_tail_dims_for_triangles_and_dot_trails():
+    w, l = review._tail_dims({"points": [[0, 0], [20, 0], [10, 30]]})
+    assert (w, l) == (20, 30)
+    w, l = review._tail_dims({"root": [0, 0], "dots": [[0, 10, 7], [0, 25, 5], [0, 36, 3]]})
+    assert (w, l) == (14, 39)
+
+
+@_with_env
+def test_missing_page_scale_reported(env):
+    env.panel(P, 1024, 768, aspect=1.33, layout={"bubbles": [_bubble(0, [100, 50, 400, 110])]})
+    del env.slots[P]["scale"]
+    (env.project.base_dir / "panel_slots.json").write_text(json.dumps(env.slots))
+    assert _messages(env, P, "record") == ["no page scale for this panel (re-run assemble_pages)"]
 
 
 @_with_env
@@ -212,8 +307,7 @@ def test_tail_aimed_off_face_flagged(env):
                     _bubble(1, [500, 50, 800, 110], anchor=[900, 600])],    # on nothing
         "faces": [[100, 350, 200, 450]],
     })
-    assert _kinds(env, P) == ["tail_anchor"]
-    assert _messages(env, P) == ["line 2: tail aims at no detected face"]
+    assert _messages(env, P, "tail_anchor") == ["line 2: tail aims at no detected face"]
 
 
 @_with_env

@@ -192,7 +192,7 @@ _EXPECTED_KEYS = [
     "text.sfx_font_ratio",
     "text.min_font_px",
     "text.font_scale",
-    "text.tail_frac",
+    "text.tail_scale",
     # wan2gp_bridge.py (inpaint knobs)
     "wan2gp.inpaint_denoising",
     "wan2gp.inpaint_masking_strength",
@@ -269,7 +269,7 @@ def test_repo_config_text_defaults_match_module_defaults():
     assert cfg_get(cfg, "text.sfx_font_ratio") == tr._DEFAULT_SFX_FONT_RATIO
     assert cfg_get(cfg, "text.min_font_px") == tr._DEFAULT_MIN_FONT_PX
     assert cfg_get(cfg, "text.font_scale") == tr._DEFAULT_FONT_SCALE
-    assert cfg_get(cfg, "text.tail_frac") == tr._DEFAULT_TAIL_FRAC
+    assert cfg_get(cfg, "text.tail_scale") == tr._DEFAULT_TAIL_SCALE
 
 
 def test_repo_config_enricher_defaults_match_module_defaults():

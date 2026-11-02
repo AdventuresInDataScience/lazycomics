@@ -3,10 +3,11 @@
 
 Usage::
 
-    python tools/contact_sheet.py <project_dir> [--out DIR] [--baseline PROJECT_DIR]
+    python tools/contact_sheet.py <project_dir> [--reletter] [--out DIR]
+                                  [--baseline PROJECT_DIR]
 
-Reads only what the pipeline already wrote (it generates and re-letters
-nothing) and writes into ``--out`` (default: ``<project_dir>``):
+Reads what the pipeline already wrote (it never generates) and writes into
+``--out`` (default: ``<project_dir>``):
 
 * ``sheet_pages.png``: per page, one row per panel (raw | lettered | as placed
   on the page) with its issues, and the assembled page alongside;
@@ -18,6 +19,12 @@ Works on any project, e.g. ``tests/e2e/outputs/e2e`` after a full e2e run;
 ``tools/golden_run.py`` calls ``write_sheets`` for the golden subset.
 Needs the project to have been through ``render_text`` and
 ``assemble_pages`` for the layout and slot records.
+
+``--reletter`` first re-runs ``render_text`` and ``assemble_pages`` over the
+project's existing panels (forced, at the ``assembly.*`` page size from
+``lazycomics_config.yaml``), so any project is a lettering regression set
+with no GPU: e.g. the e2e's 33 panels, in seconds. It overwrites
+``panels_text/`` and ``pages/``, hand edits included.
 """
 
 from __future__ import annotations
@@ -30,9 +37,26 @@ REPO = Path(__file__).resolve().parent.parent
 # Allow running straight from a source checkout without installing the package.
 sys.path.insert(0, str(REPO / "src"))
 
+import lazycomics as lc  # noqa: E402
 from lazycomics import review  # noqa: E402
+from lazycomics.config import cfg_get, load_config  # noqa: E402
 from lazycomics.models import Project  # noqa: E402
 from lazycomics.project import load_project  # noqa: E402
+
+
+def reletter(project: Project, config: dict, panels: list[str] | None = None) -> None:
+    """Re-letter ``panels`` (default: all) and re-assemble every page, forced,
+    at the page size ``config`` gives (``assembly.*``)."""
+    lc.render_text(project, panels=panels, force=True, config=config)
+    lc.assemble_pages(
+        project,
+        page_height_px=cfg_get(config, "assembly.page_height_px", None),
+        gutter_px=cfg_get(config, "assembly.gutter_px", None),
+        bg_color=cfg_get(config, "assembly.bg_color", None),
+        stretch_tolerance=cfg_get(config, "assembly.stretch_tolerance", None),
+        fit_mode=cfg_get(config, "assembly.fit_mode", None),
+        force=True,
+    )
 
 
 def write_sheets(
@@ -58,11 +82,15 @@ def write_sheets(
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("project_dir")
+    ap.add_argument("--reletter", action="store_true",
+                    help="re-run render_text + assemble_pages first (overwrites both)")
     ap.add_argument("--out", help="where to write the sheets (default: the project dir)")
     ap.add_argument("--baseline", help="another project dir to compare against")
     args = ap.parse_args(argv)
 
     project = load_project(args.project_dir)
+    if args.reletter:
+        reletter(project, load_config(REPO / "lazycomics_config.yaml"))
     out = Path(args.out).resolve() if args.out else project.base_dir
     baseline = load_project(args.baseline) if args.baseline else None
     issues = write_sheets(project, out, baseline=baseline)

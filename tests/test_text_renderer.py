@@ -40,10 +40,6 @@ class _Env:
 
         # Default: no faces detected. Individual tests override.
         self._orig_detect = text_renderer._detect_all_faces
-        # Face identity downloads a model and reads real faces; off by
-        # default (tests that exercise it patch it themselves).
-        self._orig_identity = text_renderer._identity_similarity
-        text_renderer._identity_similarity = lambda img, faces, refs: None
         text_renderer._detect_all_faces = lambda img: []
 
     def set_faces(self, faces: list[tuple[int, int, int, int]]):
@@ -72,7 +68,6 @@ class _Env:
 
     def close(self):
         text_renderer._detect_all_faces = self._orig_detect
-        text_renderer._identity_similarity = self._orig_identity
         self.tmp.cleanup()
 
 
@@ -244,9 +239,10 @@ def test_layout_sidecar_records_placements(env):
     # Line indices are positions in dialogue_lines (CBML order); the empty
     # line is skipped, not renumbered.
     assert [b["line"] for b in bubbles] == [0, 2]
-    assert bubbles[0]["tail"] is True       # speech + face found
-    assert bubbles[1]["tail"] is False      # shouts never get a tail
+    assert len(bubbles[0]["tail"]["points"]) == 3     # speech + face found: a triangle
+    assert len(bubbles[1]["tail"]["points"]) == 3     # a shout gets a spike
     assert bubbles[0]["anchor"] == [140, 340]
+    assert layout["font_px"] > 0
     for b in bubbles:
         x0, y0, x1, y1 = b["rect"]
         assert 0 <= x0 < x1 <= 800 and 0 <= y0 < y1 <= 600
@@ -377,6 +373,125 @@ def test_sfx_center_position_supported(env):
     assert out.size == (800, 600)
 
 
+@_with_env
+def test_captions_on_one_edge_share_it(env):
+    # e2e page_1_panel_1: two long top captions overlapped (problem 17).
+    long = "Creature of the night by... also night, every night, all night long."
+    env.make_panel("p1", w=688, h=1024)
+    env.write_enriched("p1", caption_boxes=[
+        {"text": long, "position": "top-left"},
+        {"text": long, "position": "top-center"},
+        {"text": long, "position": "top-right"},
+        {"text": "Later.", "position": "bottom-right"},
+    ])
+    render_text(env.project)
+    caps = _layout(env)["captions"]
+    top = caps[:3]
+    for a, b in zip(top, top[1:]):
+        assert a[2] < b[0], (a, b)                  # left to right, apart
+    assert all(c[1] == 20 for c in top)            # all on the top edge
+    assert caps[3][2] == 688 - 20 and caps[3][3] == 1024 - 20   # alone: still in its corner
+
+
+@_with_env
+def test_captions_at_one_anchor_stack(env):
+    env.make_panel("p1", w=800, h=600)
+    env.write_enriched("p1", caption_boxes=[
+        {"text": "First.", "position": "top-left"},
+        {"text": "Second.", "position": "top-left"},
+        {"text": "Last.", "position": "bottom-left"},
+        {"text": "Very last.", "position": "bottom-left"},
+    ])
+    render_text(env.project)
+    first, second, last, very_last = _layout(env)["captions"]   # recorded in CBML order
+    assert second[1] > first[3] and second[0] == first[0]       # top: stacks downward
+    assert very_last[3] < last[1]                               # bottom: stacks upward
+
+
+@_with_env
+def test_sfx_moves_off_a_face_within_its_zone(env):
+    # e2e page_8_panel_3: a centre SFX across a close-up's mouth (problem 24).
+    face = (357, 146, 631, 482)
+    env.set_faces([face])
+    env.make_panel("p1", w=1024, h=768, colour=(40, 40, 40))
+    env.write_enriched("p1", sfx_lines=[{"text": "SKREEEE", "position": "center"}])
+    render_text(env.project)
+    layout = _layout(env)
+    (sfx,) = layout["sfx"]
+    assert _rect_overlap(sfx, face) == 0
+    cx, cy = (sfx[0] + sfx[2]) / 2, (sfx[1] + sfx[3]) / 2
+    assert 0.25 * 1024 <= cx <= 0.75 * 1024 and 0.2 * 768 <= cy <= 0.8 * 768   # still central
+    assert layout["faces"] == [list(face)]   # recorded even with no dialogue
+
+
+@_with_env
+def test_sfx_without_a_face_stays_on_its_anchor(env):
+    env.make_panel("p1", w=800, h=600)
+    env.write_enriched("p1", sfx_lines=[{"text": "BOOM", "position": "top-right"}])
+    render_text(env.project)
+    (sfx,) = _layout(env)["sfx"]
+    assert sfx[2] == 800 - 20 and sfx[1] == 20
+
+
+@_with_env
+def test_alternating_exchange_steps_down(env):
+    # e2e page_3_panel_1: "I have seen worse crashes." and "Like 2008?" started
+    # level, so Gerald's next line read as part of his first (problem 23).
+    env.set_faces([(150, 420, 230, 520), (600, 420, 680, 520)])
+    env.make_panel("p1", w=900, h=1000, colour=(40, 40, 40))
+    env.write_enriched("p1", dialogue_lines=[
+        {"character": "YUKI", "text": "How are you so calm?", "bubble_type": "speech"},
+        {"character": "GERALD", "text": "I have seen worse crashes.", "bubble_type": "speech"},
+        {"character": "YUKI", "text": "Like 2008?", "bubble_type": "speech"},
+        {"character": "GERALD", "text": "Much earlier.", "bubble_type": "speech"},
+    ], bubble_layout=[
+        {"character": "GERALD", "x_frac": 0.0, "y_frac": 0, "width_frac": 0.5, "height_frac": 1},
+        {"character": "YUKI", "x_frac": 0.5, "y_frac": 0, "width_frac": 0.5, "height_frac": 1},
+    ])
+    render_text(env.project)
+    layout = _layout(env)
+    tops = [b["rect"][1] for b in layout["bubbles"]]
+    assert all(b - a >= 0.75 * layout["font_px"] for a, b in zip(tops, tops[1:])), tops
+    from lazycomics import review
+    assert review._stagger_issues(layout["bubbles"], layout["font_px"]) == []
+    assert review._reading_order_issues(layout["bubbles"]) == []
+    assert review._tail_cross_issues(layout) == []
+
+
+@_with_env
+def test_bubble_rewraps_narrower_to_keep_off_a_face(env):
+    # e2e page_1_panel_1: captions across the top, a centred face, an SFX
+    # below it. At full width the thought cloud only fit over the face.
+    face = (316, 197, 397, 310)
+    env.set_faces([face])
+    env.make_panel("p1", w=688, h=1024, colour=(40, 40, 40))
+    env.write_enriched("p1",
+        caption_boxes=[{"text": "Hedge fund analyst by day.", "position": "top-left"},
+                       {"text": "Creature of the night by... also night.", "position": "top-right"}],
+        sfx_lines=[{"text": "SLURP", "position": "center"}],
+        dialogue_lines=[
+            {"character": "GERALD", "text": "Maybe tonight I won't drink anybody.", "bubble_type": "thought"},
+            {"character": "GERALD", "text": "Probably not though.", "bubble_type": "speech"}],
+        bubble_layout=[{"character": "GERALD", "x_frac": 0, "y_frac": 0, "width_frac": 1, "height_frac": 1}])
+    render_text(env.project)
+    layout = _layout(env)
+    for b in layout["bubbles"]:
+        assert _rect_overlap(b["rect"], face) == 0, b
+        assert b["tail"]
+
+
+@_with_env
+def test_overflowing_dialogue_is_recorded(env):
+    env.set_faces([(100, 100, 150, 160)])
+    env.make_panel("p1", w=224, h=400, colour=(40, 40, 40))
+    words = "far too many words for one small panel to hold " * 3
+    env.write_enriched("p1", dialogue_lines=[
+        {"character": "NOVA", "text": words, "bubble_type": "speech"} for _ in range(4)],
+        bubble_layout=[{"character": "NOVA", "x_frac": 0, "y_frac": 0, "width_frac": 1, "height_frac": 1}])
+    render_text(env.project)
+    assert _layout(env)["overflow"] > 1.0
+
+
 # ---------------------------------------------------------------------------
 # Dialogue bubbles
 # ---------------------------------------------------------------------------
@@ -426,14 +541,17 @@ def test_dialogue_avoids_face_in_top_half_of_panel(env):
 
 
 @_with_env
-def test_two_lines_same_speaker_stack_vertically(env):
+def test_two_lines_same_speaker_stack_as_linked_balloons(env):
     """Consecutive lines from the same speaker stack into two vertically
-    separated bubbles (the convention for one character's run of dialogue)."""
+    separated bubbles, the second joined to the first instead of carrying its
+    own tail (linked balloons: one character's run of dialogue)."""
+    env.set_faces([(360, 420, 440, 520)])
     env.make_panel("p1", w=800, h=600, colour=(40, 40, 40))
     env.write_enriched("p1",
         dialogue_lines=[
             {"character": "NOVA", "text": "A", "bubble_type": "speech"},
             {"character": "NOVA", "text": "B", "bubble_type": "speech"},
+            {"character": "NOVA", "text": "C", "bubble_type": "thought"},
         ],
         bubble_layout=[
             {"character": "NOVA", "x_frac": 0, "y_frac": 0,
@@ -441,14 +559,22 @@ def test_two_lines_same_speaker_stack_vertically(env):
         ],
     )
     render_text(env.project)
+    first, second, third = _layout(env)["bubbles"]
+    assert first["rect"][3] < second["rect"][1]          # stacked, a gap between
+    assert first["tail"] and second["tail"] is None
+    assert second["linked_to"] == 0 and second["no_tail"] == "linked"
+    assert third["tail"] and "linked_to" not in third     # a thought isn't a speech run
+    # The bridge fills the gap between the two balloons.
     out = Image.open(env.project.panels_text_dir / "p1.png").convert("RGB")
+    gap_y = (first["rect"][3] + second["rect"][1]) // 2
+    assert any(all(c > 240 for c in out.getpixel((x, gap_y))) for x in range(800))
+    # ...kept roughly upright: the second balloon isn't parked off to one side.
+    def centre(r):
+        return (r[0] + r[2]) / 2
 
-    bands = _white_y_bands(out)
-    assert len(bands) == 2, f"expected 2 stacked bubbles, found bands={bands}"
-    # The second bubble sits strictly below the first, with a gap between.
-    assert bands[0][1] < bands[1][0], (
-        f"bubbles should be vertically separated; bands={bands}"
-    )
+    assert abs(centre(first["rect"]) - centre(second["rect"])) < 40
+    from lazycomics import review
+    assert review._tail_issues(_layout(env)) == []
 
 
 @_with_env
@@ -742,7 +868,7 @@ def test_speech_tail_is_short_stub_toward_face(env):
 
     center_bot = col_bottom(cx)            # body + tail at the centre
     edge_bot = col_bottom(min(xs) + 3)     # body only, away from the tail
-    max_tail = max(16, int(min(800, 600) * 0.05))  # mirrors the renderer
+    max_tail = text_renderer._tail_sizes(_layout(env)["font_px"])["hi"]  # mirrors the renderer
 
     # The tail protrudes below the bubble body at the centre column only.
     assert center_bot > edge_bot + 8, (
@@ -802,8 +928,8 @@ def test_thought_tail_renders_trailing_circles(env):
 
 
 @_with_env
-def test_shout_skips_tail(env):
-    """Shout has no tail — the area below the bubble stays panel background."""
+def test_shout_gets_a_spike_toward_the_speaker(env):
+    """Shouts used to get no tail at all (problem 21a): now a spike, drawn."""
     env.set_faces([(350, 450, 450, 550)])
     env.make_panel("p1", w=800, h=600, colour=(40, 40, 40))
     env.write_enriched("p1",
@@ -816,14 +942,17 @@ def test_shout_skips_tail(env):
         ],
     )
     render_text(env.project)
+    (bubble,) = _layout(env)["bubbles"]
+    (ax, ay), (bx, by), (tx, ty) = bubble["tail"]["points"]
+    # The tip points from the starburst toward the face, short of it...
+    fx, fy = 400, 500
+    assert ((tx - fx) ** 2 + (ty - fy) ** 2) < (((ax + bx) / 2 - fx) ** 2 + ((ay + by) / 2 - fy) ** 2)
+    assert not (350 <= tx <= 450 and 450 <= ty <= 550)
+    # ...and is drawn: white halfway along the spike, past the starburst.
     out = Image.open(env.project.panels_text_dir / "p1.png").convert("RGB")
-
-    # The midpoint between the bubble and the target face must remain panel
-    # bg. With no tail being drawn, no white intrusion appears here.
-    r, g, b = out.getpixel((50, 250))
-    assert r < 80 and g < 80 and b < 80, (
-        f"shout should not draw a tail; got white intrusion at ({r},{g},{b})"
-    )
+    mx, my = (tx + (ax + bx) / 2) / 2, (ty + (ay + by) / 2) / 2
+    assert my > bubble["rect"][3]
+    assert all(c > 200 for c in out.getpixel((round(mx), round(my))))
 
 
 @_with_env
@@ -1025,14 +1154,15 @@ def test_layout_moves_bubbles_off_captions_and_sfx():
     # Lay a bubble out, put an obstacle (a caption) exactly where it landed,
     # lay it out again: it must move clear.
     face = (360, 300, 440, 380)
-    bubble = {"w": 170, "h": 50, "speaker": "NOVA", "anchor": (400, 340),
-              "has_face": True, "face": face, "tailed": True}
+    bubble = {"w": 170, "h": 50, "speaker": "NOVA", "type": "speech", "anchor": (400, 340),
+              "has_face": True, "face": face}
     busy = text_renderer._busyness_map(Image.new("RGB", (800, 600), (40, 40, 40)))
-    (x, y), = text_renderer._layout_bubbles([bubble], [face], [], busy, 800, 600, 20,
-                                            clearance=30)
+    sizes = text_renderer._tail_sizes(24)
+    [(x, y)], _ = text_renderer._layout_bubbles([bubble], [face], [], busy, 800, 600, 20,
+                                                sizes=sizes)
     caption = [x - 10, y - 10, x + 180, y + 60]
-    (x2, y2), = text_renderer._layout_bubbles([bubble], [face], [caption], busy, 800, 600, 20,
-                                              clearance=30)
+    [(x2, y2)], _ = text_renderer._layout_bubbles([bubble], [face], [caption], busy, 800, 600, 20,
+                                                  sizes=sizes)
     assert _rect_overlap((x2, y2, x2 + 170, y2 + 50), caption) == 0
 
 
@@ -1121,82 +1251,102 @@ def test_hand_added_face_counts_as_a_face(env):
     assert _rect_overlap(layout["bubbles"][0]["rect"], (360, 300, 440, 380)) == 0
 
 
-def test_tail_is_lengthened_to_a_visible_stub():
-    img = Image.new("RGB", (400, 400), (40, 40, 40))
+# Tails (problems 15, 21, 23): geometry from _tail_shape, sized from the font.
+
+SIZES = text_renderer._tail_sizes(30)   # base 24, 39-75 long; dots 11, trail 54-105
+
+
+def _tail_len(shape):
+    (ax, ay), (bx, by), (tx, ty) = shape["points"]
+    return ((tx - (ax + bx) / 2) ** 2 + (ty - (ay + by) / 2) ** 2) ** 0.5
+
+
+def test_tail_sizes_follow_the_font():
+    assert text_renderer._tail_sizes(30) == {
+        "base": 24, "lo": 39, "hi": 75, "trail_lo": 54, "trail_hi": 105, "dot": 11}
+    assert text_renderer._tail_sizes(30, scale=2.0)["hi"] == 150
+
+
+def test_tail_stops_short_of_the_face_and_points_at_it():
+    rect, face = (100, 100, 300, 160), (180, 210, 240, 270)   # face 50px below
+    shape = text_renderer._tail_shape(rect, face, "speech", SIZES)
+    (ax, ay), (bx, by), (tx, ty) = shape["points"]
+    assert ay == by and 157 <= ay <= 160            # based on the bottom edge
+    assert abs((bx - ax) - SIZES["base"]) <= 1      # as wide as the font says
+    assert 180 <= tx <= 240 and ty < 210            # toward the face, short of it
+    assert _tail_len(shape) >= SIZES["lo"]
+
+
+def test_tail_has_a_minimum_length_when_the_face_is_close():
+    shape = text_renderer._tail_shape((100, 100, 300, 160), (180, 163, 240, 220), "speech", SIZES)
+    assert _tail_len(shape) >= SIZES["lo"] - 1
+
+
+def test_tail_is_capped_when_the_face_is_far():
+    shape = text_renderer._tail_shape((100, 100, 300, 160), (180, 560, 240, 620), "speech", SIZES)
+    assert _tail_len(shape) <= SIZES["hi"] + 4   # + the base sunk into the outline
+
+
+def test_tail_leaves_sideways_when_the_speaker_is_level():
+    # Was: no tail at all (problem 21b).
+    shape = text_renderer._tail_shape((100, 100, 300, 160), (360, 100, 420, 160), "speech", SIZES)
+    (ax, ay), (bx, by), (tx, ty) = shape["points"]
+    assert ax == bx and 296 <= ax <= 300 and tx > 300   # off the right edge, to the right
+
+
+def test_tail_routes_around_another_bubble():
+    # The speaker is above, behind another bubble: the tail slides along the
+    # top edge until it clears it (problem 23). A blocker wider than the
+    # bubble leaves no route; the layout keeps clear of those instead.
+    rect, face = (100, 300, 400, 360), (270, 150, 330, 210)
+    above = (230, 230, 450, 285)
+    straight = text_renderer._tail_shape(rect, face, "speech", SIZES)
+    assert text_renderer._tail_hits(straight, above)
+    routed = text_renderer._tail_shape(rect, face, "speech", SIZES, avoid=[above])
+    assert not text_renderer._tail_hits(routed, above)
+    assert routed["points"][2][1] < 300       # still heading up, toward the face
+
+
+def test_every_bubble_type_gets_a_tail():
+    rect, face = (100, 100, 300, 180), (180, 260, 240, 320)
+    for kind in ("speech", "whisper", "shout"):
+        assert len(text_renderer._tail_shape(rect, face, kind, SIZES)["points"]) == 3, kind
+    dots = text_renderer._tail_shape(rect, face, "thought", SIZES)["dots"]
+    assert [r for _, _, r in dots] == sorted((r for _, _, r in dots), reverse=True)
+
+
+def test_thought_dots_trail_out_spaced_apart():
+    # Was: three dots within ~20px of the cloud (problem 15).
+    shape = text_renderer._tail_shape((100, 100, 300, 180), (180, 400, 240, 460), "thought", SIZES)
+    dots = shape["dots"]
+    for (x0, y0, r0), (x1, y1, r1) in zip(dots, dots[1:]):
+        assert ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5 > r0 + r1 + 4   # not touching
+    rx, ry = shape["root"]
+    x, y, r = dots[-1]
+    assert ((x - rx) ** 2 + (y - ry) ** 2) ** 0.5 + r >= SIZES["trail_lo"]
+
+
+def test_shout_spike_is_based_inside_the_starburst():
+    rect = (100, 100, 300, 180)
+    (ax, ay), (bx, by), (tx, ty) = text_renderer._tail_shape(
+        rect, (180, 260, 240, 320), "shout", SIZES)["points"]
+    assert 140 < ay < 180 and 140 < by < 180 and ty > 180
+
+
+def test_whisper_tail_is_dashed():
+    img = Image.new("RGB", (400, 400), (90, 90, 90))
     draw = ImageDraw.Draw(img)
-    rect = (100, 100, 300, 160)
-    # Speaker only 3px below the bubble: the tail still reaches 12px.
-    assert text_renderer._draw_tail(draw, rect, (200, 163), "speech", 40)
-    r, g, b = img.getpixel((200, 160 + text_renderer._TAIL_STUB_PX - 4))
-    assert r > 200 and g > 200 and b > 200
+    shape = {"points": [[188, 160], [212, 160], [200, 260]]}
+    text_renderer._draw_tail(draw, shape, "whisper")
+    # Walk down the left side: it alternates dark dashes and gaps.
+    dark = [img.getpixel((round(188 + 12 * s / 100), 160 + s))[0] < 60 for s in range(0, 100, 2)]
+    assert any(dark) and not all(dark)
 
 
-def test_tail_reports_not_drawn_when_speaker_is_level_with_bubble():
-    draw = ImageDraw.Draw(Image.new("RGB", (400, 400)))
-    assert text_renderer._draw_tail(draw, (100, 100, 300, 160), (350, 130), "speech", 40) is False
-
-
-# Identity blend — similarities are the real SFace values measured on the
-# golden panels in the W3.2 spike.
-
-
-def test_identity_fixes_mirrored_composition():
-    # Golden page_4_panel_1: the generator drew David left and Ranjeet right;
-    # the CBML order predicts David far right. Position alone gives the left
-    # face to Yuki and the right one to David.
-    chars = ["GERALD", "YUKI", "RANJEET", "DAVID"]
-    left, right = _face(0.31, 62), _face(0.82, 54)
-    sims = {"DAVID": [0.34, 0.19], "RANJEET": [0.28, 0.26],
-            "YUKI": [0.12, 0.15], "GERALD": [-0.02, -0.00]}
-    got = text_renderer._match_characters_to_faces(chars, _regions(chars, 1000),
-                                                    [left, right], 1000, similarity=sims)
-    assert got == {"DAVID": left, "RANJEET": right}
-
-
-def test_weak_identity_does_not_overrule_correct_position():
-    # Golden page_2_panel_2: identity alone swaps Gerald (drawn off-model)
-    # and Ranjeet; blended with position, the correct match stands.
-    chars = ["GERALD", "YUKI", "RANJEET"]
-    bg, g, y, r = _face(0.08, 49), _face(0.24, 137), _face(0.60, 103), _face(0.80, 121)
-    sims = {"GERALD": [None, 0.21, 0.16, 0.28], "YUKI": [None, 0.29, 0.54, 0.38],
-            "RANJEET": [None, 0.31, 0.37, 0.24]}
-    got = text_renderer._match_characters_to_faces(chars, _regions(chars, 1000),
-                                                    [bg, g, y, r], 1000, similarity=sims)
-    assert got == {"GERALD": g, "YUKI": y, "RANJEET": r}
-
-
-def test_identity_without_usable_evidence_falls_back_to_position():
-    # No face could be aligned: behave exactly like position-only matching,
-    # including failing closed on an ambiguous face.
-    chars = ["A", "B"]
-    face = [_face(0.50, 80)]
-    sims = {"A": [None], "B": [None]}
-    assert text_renderer._match_characters_to_faces(
-        chars, _regions(chars, 1000), face, 1000, similarity=sims) == {}
-
-
-@_with_env
-def test_identity_used_only_with_references_and_several_characters(env):
-    calls = []
-    text_renderer._identity_similarity = (
-        lambda img, faces, refs: calls.append(dict(refs)) or {c: [0.0] * len(faces) for c in refs})
-    env.make_panel("p1", 800, 600, colour=(40, 40, 40))
-    env.set_faces([(100, 300, 180, 380), (600, 300, 680, 380)])
-    two = [{"identifier": "NOVA", "reference_images": ["/refs/nova.png"]},
-           {"identifier": "REX", "reference_images": []}]
-    # As the enricher writes it: bubble_layout names every panel character.
-    layout_two = [
-        {"character": "NOVA", "x_frac": 0.0, "y_frac": 0, "width_frac": 0.5, "height_frac": 1},
-        {"character": "REX", "x_frac": 0.5, "y_frac": 0, "width_frac": 0.5, "height_frac": 1},
-    ]
-    env.write_enriched("p1", characters=two, bubble_layout=layout_two, dialogue_lines=[
-        {"character": "NOVA", "text": "Hi", "bubble_type": "speech"}])
-    render_text(env.project)
-    assert calls == [{"NOVA": "/refs/nova.png"}]
-    assert _layout(env)["matching"] == "position+identity"
-
-    calls.clear()
-    env.write_enriched("p1", characters=two[:1], bubble_layout=layout_two[:1], dialogue_lines=[
-        {"character": "NOVA", "text": "Hi", "bubble_type": "speech"}])
-    render_text(env.project, force=True)
-    assert calls == [] and _layout(env)["matching"] == "position"
+def test_thought_cloud_is_drawn_inside_its_box():
+    # The old cloud's puffs overshot their box by up to a sixth.
+    for w, h in [(371, 233), (500, 150), (150, 400), (300, 300)]:
+        img = Image.new("RGB", (w + 200, h + 200), (90, 90, 90))
+        text_renderer._draw_thought(ImageDraw.Draw(img), 100, 100, w, h, 2)
+        bbox = Image.eval(img.convert("L"), lambda v: 255 if v != 90 else 0).getbbox()
+        assert bbox[0] >= 99 and bbox[1] >= 99 and bbox[2] <= 101 + w and bbox[3] <= 101 + h, (w, h, bbox)

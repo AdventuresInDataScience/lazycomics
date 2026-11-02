@@ -209,7 +209,9 @@ def test_full_pipeline_e2e():
     assert len(rendered) == len(panels)
 
     # === Assemble pages =====================================================
-    pages = lc.assemble_pages(project, page_height_px=800, gutter_px=8)
+    # At the configured (production) page size, so the pages reviewed are
+    # the pages that ship.
+    pages = lc.assemble_pages(project)
     assert len(pages) > 0, "expected pages to be assembled"
     for pnum in range(1, len(pages) + 1):
         # Pages are written zero-padded (page_001.png), matching the

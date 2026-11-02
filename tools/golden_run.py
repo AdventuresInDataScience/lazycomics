@@ -71,7 +71,7 @@ import lazycomics as lc  # noqa: E402
 from lazycomics import review  # noqa: E402
 from lazycomics.config import cfg_get, load_config  # noqa: E402
 
-from contact_sheet import write_sheets  # noqa: E402  (sibling script in tools/)
+from contact_sheet import reletter, write_sheets  # noqa: E402  (sibling script in tools/)
 
 FIXTURES = REPO / "tests" / "e2e" / "fixtures"
 GOLDEN_CBML = FIXTURES / "golden.cbml"
@@ -126,17 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         lc.generate_panels(project, panels=panels, force=args.force, config=config)
         gen_s = time.perf_counter() - t0
 
-    lc.render_text(project, panels=panels, force=True, config=config)
-    lc.assemble_pages(
-        project,
-        page_height_px=cfg_get(config, "assembly.page_height_px", None),
-        gutter_px=cfg_get(config, "assembly.gutter_px", None),
-        bg_color=cfg_get(config, "assembly.bg_color", None),
-        stretch_tolerance=cfg_get(config, "assembly.stretch_tolerance", None),
-        fit_mode=cfg_get(config, "assembly.fit_mode", None),
-        force=True,
-    )
-
+    reletter(project, config, panels)
     issues = write_sheets(project, out, baseline=baseline)
 
     report = _format_report(panels, issues, gen_s, [] if args.force else reused, args)

@@ -183,7 +183,8 @@ def _render_page_canvas(
     """Render one page (or spread) onto a single (span*page_w × page_h) canvas.
 
     When ``record`` is given, each real (non-placeholder) panel's visible
-    window is stored under its panel ID as ``{"visible": [x0, y0, x1, y1]}``.
+    window is stored under its panel ID as ``{"visible": [x0, y0, x1, y1],
+    "scale": page px per panel px}``.
     """
     span = page.span
     canvas_w = page_w * span
@@ -214,9 +215,14 @@ def _render_page_canvas(
                               fit_mode, bg_color)
         canvas.paste(fitted, (slot_x, slot_y))
         if record is not None and (project.panels_text_dir / f"{panel_id}.png").is_file():
-            record[panel_id] = {"visible": list(_visible_window(
-                *panel_img.size, slot_w, slot_h, stretch_tolerance, fit_mode,
-            ))}
+            visible = _visible_window(*panel_img.size, slot_w, slot_h, stretch_tolerance, fit_mode)
+            record[panel_id] = {
+                "visible": list(visible),
+                # Page px per panel px, so checks can judge sizes as printed
+                # (the smaller axis when letterboxed or stretched).
+                "scale": round(min(slot_w / max(1, visible[2] - visible[0]),
+                                   slot_h / max(1, visible[3] - visible[1])), 4),
+            }
 
     return canvas
 

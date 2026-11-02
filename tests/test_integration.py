@@ -53,10 +53,6 @@ class _Env:
         # Face-detection seam: covered in isolation by the per-module tests;
         # here we care about pipeline integration, not the detector.
         self._orig_faces = text_renderer._detect_all_faces
-        # Face identity downloads a model and reads real faces; off by
-        # default (tests that exercise it patch it themselves).
-        self._orig_identity = text_renderer._identity_similarity
-        text_renderer._identity_similarity = lambda img, faces, refs: None
         text_renderer._detect_all_faces = lambda img: []
 
     def write_cbml(self, body: str) -> Path:
@@ -73,7 +69,6 @@ class _Env:
 
     def close(self):
         text_renderer._detect_all_faces = self._orig_faces
-        text_renderer._identity_similarity = self._orig_identity
         self.tmp.cleanup()
 
 

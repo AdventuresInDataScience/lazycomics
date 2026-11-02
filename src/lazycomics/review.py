@@ -23,10 +23,23 @@ Checks (``check_panel``), by ``Issue.kind``:
   its page slot shows (i.e. it gets cropped off the page).
 * ``order`` — consecutive CBML lines whose bubbles read backwards in Western
   Z-order (next line clearly higher, or same row but to the left).
-* ``overlap`` / ``face`` — boxes colliding; a bubble covering more than a
-  quarter of a detected face.
-* ``no_tail`` — a speech/thought bubble drawn without a tail because the
-  speaker's face wasn't found.
+* ``overflow`` — more dialogue than the panel can hold: stacked, the bubbles
+  are taller than the panel, so they overprint each other (a script fault:
+  cut the text or give it a bigger panel).
+* ``stagger`` — consecutive lines whose bubbles start level: with no drop
+  between them, a speaker's two lines either side of another's read as one
+  speech (Docs/PLAN.md problem 23).
+* ``overlap`` / ``face`` — boxes colliding; a bubble or SFX covering more than
+  a quarter of a detected face, or lying more than a quarter on one.
+* ``no_tail`` — a bubble drawn without a tail, with the renderer's reason:
+  speaker not matched to a face (fail closed, expected), or, in records from
+  before W7, bubble level with the face or a shout/whisper. A balloon linked
+  to its speaker's previous one has no tail by design and isn't reported.
+* ``tail_size`` — a tail too short or too narrow to see on the assembled page
+  (judged in page pixels, via the slot's scale, against the page height).
+* ``tail_cross`` — a tail running into another bubble, caption or SFX, or
+  pointing through one on its way to the speaker's face (so it reads as
+  that box's).
 * ``tail_anchor`` — a tail aimed at a point inside no detected face. True by
   construction today (tails only aim at face centres); a regression guard.
 * ``missing`` / ``record`` — inputs absent (no panel, no layout/slot record).
@@ -40,12 +53,14 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 from pathlib import Path
 from typing import Any, NamedTuple
 
 from PIL import Image, ImageDraw, ImageFont
 
 from lazycomics import face_detector
+from lazycomics.geometry import shape_hits_rect
 from lazycomics.models import Project
 
 __all__ = ["Issue", "check_panel", "pages_sheet", "character_sheet", "dataset_sheet",
@@ -57,6 +72,19 @@ _FACE_COVER_FRAC = 0.25
 # Bounding rects of rounded bubbles can intersect at the corners without the
 # drawn shapes touching; ignore overlaps below this fraction of the smaller box.
 _OVERLAP_MIN_FRAC = 0.01
+# Consecutive bubbles must start at least this many font sizes apart
+# vertically (the renderer staggers them by a line height).
+_STAGGER_MIN_FONT = 0.75
+# Smallest tail that reads on the assembled page, as a fraction of the page
+# height: on a 3000px page, 36px long and 18px across the base (a thought
+# trail's biggest dot). Dialogue text there is ~1-1.5% of the page height.
+_TAIL_MIN_LEN_FRAC = 0.012
+_TAIL_MIN_WIDTH_FRAC = 0.006
+_NO_TAIL_REASON = {
+    "unmatched": "speaker not matched to a face",
+    "level": "bubble level with the speaker's face",
+    "type": "shouts and whispers get none",
+}
 # Character-sheet head crops only trust a face this confident. The hybrid
 # detector accepts from 0.5, and on stylised panels its 0.5-0.6 hits are often
 # not faces at all (page_6_panel_1: a 0.53 hit on the floor, real face missed).
@@ -100,11 +128,18 @@ def check_panel(project: Project, panel_id: str) -> list[Issue]:
         issues.append(Issue("record", "no layout record (re-run render_text)"))
         return issues
 
-    issues += _slot_issues(project, panel_id, layout)
+    slot = (_read_json(project.base_dir / "panel_slots.json") or {}).get(panel_id)
+    if layout.get("overflow"):
+        issues.append(Issue("overflow", f"too much dialogue for the panel: stacked, the bubbles "
+                                        f"need {layout['overflow']:.0%} of its height"))
+    issues += _slot_issues(slot, layout)
     bubbles = layout.get("bubbles") or []
     issues += _reading_order_issues(bubbles)
+    issues += _stagger_issues(bubbles, layout.get("font_px"))
     issues += _overlap_issues(layout)
     issues += _tail_issues(layout)
+    issues += _tail_cross_issues(layout)
+    issues += _tail_size_issues(project, bubbles, slot)
     return issues
 
 
@@ -116,9 +151,8 @@ def _boxes(layout: dict[str, Any]) -> list[tuple[str, list[int]]]:
     return boxes
 
 
-def _slot_issues(project: Project, panel_id: str, layout: dict[str, Any]) -> list[Issue]:
+def _slot_issues(entry: dict[str, Any] | None, layout: dict[str, Any]) -> list[Issue]:
     """Overlay boxes that fall outside the part of the panel its slot shows."""
-    entry = (_read_json(project.base_dir / "panel_slots.json") or {}).get(panel_id)
     if entry is None:
         return [Issue("record", "no page-slot record (run assemble_pages)")]
     vx0, vy0, vx1, vy1 = entry["visible"]
@@ -152,6 +186,27 @@ def _reading_order_issues(bubbles: list[dict[str, Any]]) -> list[Issue]:
     return issues
 
 
+def _stagger_issues(bubbles: list[dict[str, Any]], font_px: int | None) -> list[Issue]:
+    """Consecutive lines whose bubbles start level (or nearly), not stepped down.
+
+    Pairs the order check already flags as reading upwards are left to it.
+    """
+    if not font_px:
+        return []
+    issues: list[Issue] = []
+    want = _STAGGER_MIN_FONT * font_px
+    ordered = sorted(bubbles, key=lambda b: b["line"])
+    for a, b in zip(ordered, ordered[1:]):
+        drop = b["rect"][1] - a["rect"][1]
+        band = min(a["rect"][3] - a["rect"][1], b["rect"][3] - b["rect"][1]) / 2
+        if -band <= drop < want:
+            issues.append(Issue(
+                "stagger", f"stagger: line {b['line'] + 1} starts level with line {a['line'] + 1} "
+                           f"({drop}px lower, want {want:.0f}+)",
+            ))
+    return issues
+
+
 def _overlap_issues(layout: dict[str, Any]) -> list[Issue]:
     boxes = _boxes(layout)
     issues: list[Issue] = []
@@ -162,10 +217,14 @@ def _overlap_issues(layout: dict[str, Any]) -> list[Issue]:
                 issues.append(Issue("overlap", f"overlap: {name_a} and {name_b}"))
 
     faces = layout.get("faces") or []
-    for b in layout.get("bubbles") or []:
+    covering = [(f"line {b['line'] + 1}", b["rect"]) for b in layout.get("bubbles") or []]
+    covering += [(f"sfx {i + 1}", r) for i, r in enumerate(layout.get("sfx") or [])]
+    for name, rect in covering:
         for f in faces:
-            if _overlap_area(b["rect"], f) / max(1, _area(f)) > _FACE_COVER_FRAC:
-                issues.append(Issue("face", f"line {b['line'] + 1} covers a face"))
+            # Hides a quarter of the face, or a quarter of it sits on the face
+            # (an SFX across a close-up's mouth is a sliver of the face box).
+            if _overlap_area(rect, f) / max(1, min(_area(f), _area(rect))) > _FACE_COVER_FRAC:
+                issues.append(Issue("face", f"{name} covers a face"))
                 break
     return issues
 
@@ -175,13 +234,74 @@ def _tail_issues(layout: dict[str, Any]) -> list[Issue]:
     issues: list[Issue] = []
     for b in layout.get("bubbles") or []:
         line = b["line"] + 1
-        if b["type"] in ("speech", "thought") and not b["tail"]:
-            issues.append(Issue("no_tail", f"line {line} ({b['speaker']}): no tail, speaker's face not found"))
-        if b["tail"]:
+        if b.get("no_tail") == "linked":  # joined to the speaker's previous balloon instead
+            continue
+        if not b["tail"]:
+            why = _NO_TAIL_REASON.get(b.get("no_tail"), "reason not recorded (re-run render_text)")
+            issues.append(Issue("no_tail", f"line {line} ({b['speaker']}): no tail, {why}"))
+        else:
             ax, ay = b["anchor"]
             if not any(f[0] <= ax <= f[2] and f[1] <= ay <= f[3] for f in faces):
                 issues.append(Issue("tail_anchor", f"line {line}: tail aims at no detected face"))
     return issues
+
+
+def _tail_cross_issues(layout: dict[str, Any]) -> list[Issue]:
+    """Tails that run into another bubble, a caption or an SFX."""
+    boxes = _boxes(layout)
+    issues: list[Issue] = []
+    for b in layout.get("bubbles") or []:
+        tail = b["tail"]
+        if not isinstance(tail, dict):
+            continue
+        own = f"line {b['line'] + 1}"
+        for name, rect in boxes:
+            if name == own:
+                continue
+            if shape_hits_rect(tail, rect):
+                issues.append(Issue("tail_cross", f"tail of {own} crosses {name}"))
+            elif shape_hits_rect(tail, rect, b["anchor"]):
+                issues.append(Issue("tail_cross", f"tail of {own} points through {name}"))
+    return issues
+
+
+def _tail_size_issues(project: Project, bubbles: list[dict[str, Any]],
+                      slot: dict[str, Any] | None) -> list[Issue]:
+    """Tails too short or too narrow to see once the panel is on its page."""
+    tails = [b for b in bubbles if isinstance(b["tail"], dict)]
+    if not tails or slot is None:
+        return []
+    page = project.pages_dir / f"page_{slot['pages'][0]:03d}.png"
+    if "scale" not in slot or not page.is_file():
+        return [Issue("record", "no page scale for this panel (re-run assemble_pages)")]
+    with Image.open(page) as im:
+        page_h = im.height
+    min_w, min_l = _TAIL_MIN_WIDTH_FRAC * page_h, _TAIL_MIN_LEN_FRAC * page_h
+    issues: list[Issue] = []
+    for b in tails:
+        width, length = (v * slot["scale"] for v in _tail_dims(b["tail"]))
+        if width < min_w or length < min_l:
+            issues.append(Issue(
+                "tail_size", f"line {b['line'] + 1}: tail {length:.0f}px long, {width:.0f}px wide "
+                             f"on the page (want {min_l:.0f}+ and {min_w:.0f}+)",
+            ))
+    return issues
+
+
+def _tail_dims(tail: dict[str, Any]) -> tuple[float, float]:
+    """``(width, length)`` of a recorded tail, in panel px.
+
+    A triangle (``points``: base, base, tip) is as wide as its base and as
+    long as base-midpoint to tip; a thought trail (``dots``) is as wide as its
+    biggest dot and reaches from its root to the far edge of its last dot.
+    """
+    if "points" in tail:
+        (ax, ay), (bx, by), (tx, ty) = tail["points"][:3]
+        return math.hypot(bx - ax, by - ay), math.hypot(tx - (ax + bx) / 2, ty - (ay + by) / 2)
+    rx, ry = tail["root"]
+    dots = tail["dots"]
+    return (2 * max(r for _, _, r in dots),
+            max(math.hypot(x - rx, y - ry) + r for x, y, r in dots))
 
 
 def _area(r: list[int]) -> int:

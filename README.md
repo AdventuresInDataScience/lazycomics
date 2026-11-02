@@ -33,12 +33,6 @@ pip install lazycomics
 
 Requires **Python 3.10 – 3.12**. (MediaPipe doesn't ship 3.13 wheels yet.)
 
-The first time text is rendered on a multi-character panel, lazycomics
-downloads OpenCV's SFace face-recognition model (~37 MB, checksum-verified)
-into `src/lazycomics/assets/models/`. It's used to work out which character
-a face belongs to. Offline, rendering still works and matches speakers by
-position only.
-
 Optional extras:
 
 ```bash
@@ -159,14 +153,16 @@ tests/
     │   ├── story.cbml            full story (33 panels), used by the e2e test
     │   ├── golden.cbml           12-panel subset, used by tools/golden_run.py
     │   ├── <NAME>.txt / .png     character, location and style descriptions + refs
-    │   └── golden_prompts/       frozen prompts, so golden runs are comparable
+    │   ├── golden_prompts/       frozen prompts, so golden runs are comparable
+    │   └── face_labels.json      hand labels: who is where, for scoring attribution
     ├── outputs/                  gitignored; each run replaces its own folder
     │   ├── e2e/                  test_integration_e2e.py's project
     │   ├── golden/<name>/        tools/golden_run.py --out <name>
+    │   ├── holdout/, synthetic/  tools/lettering_bench.py's re-lettered sets
     │   └── live/, live_queue/    the smoke tests
     └── archived_test_outputs/    gitignored; old runs kept on purpose, date-prefixed
-tools/                        golden_run.py, contact_sheet.py, train_lora.py,
-                              profile_architectures.py
+tools/                        golden_run.py, contact_sheet.py, lettering_bench.py,
+                              train_lora.py, profile_architectures.py
 ```
 
 ```bash
@@ -174,7 +170,8 @@ pytest tests --ignore=tests/e2e                     # unit tests, ~1 min
 python tests/e2e/test_wan2gp_live_queue.py          # bridge smoke test, minutes
 python tools/golden_run.py --force --out NAME --baseline w4_prompts   # golden subset, ~10 min
 pytest tests/e2e/test_integration_e2e.py -v -s      # full e2e, 30+ min
-python tools/contact_sheet.py tests/e2e/outputs/e2e # sheets + checks for any project
+python tools/contact_sheet.py tests/e2e/outputs/e2e [--reletter]   # sheets + checks for any project
+python tools/lettering_bench.py                     # lettering checks on tuning, held-out + synthetic panels, ~75s
 python tools/train_lora.py dataset|train PROJECT_DIR CHARACTER   # LoRA training set, then LoRA
 ```
 

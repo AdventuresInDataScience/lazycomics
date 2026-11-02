@@ -31,8 +31,8 @@ W0–W4 are in [`archive/2026-11-01_PLAN_W0-W4.md`](archive/2026-11-01_PLAN_W0-W
 | W0–W4 | **Done** 2026-10-30 to 2026-11-01: the generation contract, the verification loop (`tools/golden_run.py`), bubble layout, and character consistency (52/52 appearances on-model in the e2e). Archived. |
 | W5 Inpaint path | **Closed** 2026-11-02 with nothing built. Its fix (problem 6) is in W11. |
 | W6 LoRA training pipeline | **Done** 2026-11-02: built and unit-tested; Wan2GP loads AI Toolkit's LoRA format (checked on real pixels). No LoRA trained: that's W11. |
-| **W7 Lettering** | **Next.** e2e problems 4, 15, 17, 18, 21, 23, 24, plus the review loop (26, 27). No GPU. |
-| W8 Generation fixes | Not started. e2e problems 7, 8, 16, 25. GPU A/B runs; can run in the background during W7. |
+| **W7 Lettering** | **Built 2026-11-02; awaiting your read** of the re-lettered e2e pages (done-when's last bullet). The checks meet the rest of the done-when on the e2e and golden panels, and hold on held-out and synthetic panels. See W7. |
+| W8 Generation fixes | **Next.** e2e problems 7, 8, 16, 25. GPU A/B runs. |
 | W9 Upscaling | Not started. The pipeline's last stage has never run (problem 19). Pick an upscaler and where it sits in the pipeline, then run it. |
 | e2e sign-off (milestone) | Not started. A full e2e run, every stage, meeting W7–W9's done-whens and your review. The gate for W11. |
 | W10 Tidy-up | Not started. Unused model fields, refinement and golden-run speed. |
@@ -40,20 +40,19 @@ W0–W4 are in [`archive/2026-11-01_PLAN_W0-W4.md`](archive/2026-11-01_PLAN_W0-W
 
 ## Where things stand (2026-11-02)
 
-- **Unit tests:** 440 pass (`pytest tests --ignore=tests/e2e`, ~1 min).
+- **Unit tests:** 452 pass (`pytest tests --ignore=tests/e2e`, ~1 min).
 - **Full e2e (2026-11-01):** the pipeline runs end to end on real Wan2GP +
   Ollama, but isn't signed off.
   - `story.cbml`, 33 panels → pages → `.cbz`, in 41.5 min on AC power: 13 min
-    of LLM refinement, 27 min of generation. Output is in
-    `tests/e2e/outputs/e2e/`.
+    of LLM refinement, 27 min of generation. Kept as it was generated, the
+    "before" every problem below cites, in
+    `tests/e2e/archived_test_outputs/2026-11-01_e2e/`.
   - Characters are on-model in all 52 appearances where they're drawn.
   - Your review found the lettering the weakest part (W7), plus faults in
     the art itself (W8). Upscaling was skipped (problem 19, W9).
-  - Machine checks, rerun 2026-11-02: 28/33 panels clean. Flagged:
-    `page_1_panel_1`, `page_2_panel_2`, `page_4_panel_3`, `page_7_panel_2`,
-    `page_10_panel_1`. The checks miss most of what your review found, and
-    the pages are assembled at 533×800, not the 3000px that ships (problems
-    26, 27).
+  - **Re-lettered by W7 (2026-11-02)** in `tests/e2e/outputs/e2e/`, pages
+    at 2000×3000: 30/33 panels clean. The only issues left are four
+    speakers with no tail because their face wasn't matched (fail closed).
 - **Golden reference** for A/B runs: the golden run `w4_prompts`. Its frozen
   prompts are in `tests/e2e/fixtures/golden_prompts/`.
 - **Generate on AC power.** On battery the laptop caps the GPU, and large
@@ -66,22 +65,21 @@ Numbers carry over from the archived plans; code and tools cite them.
 
 | # | Problem | Evidence | Cause / lead | Fix in |
 |---|---|---|---|---|
-| 4 | Bubble tail points at the wrong character | e2e: `page_5_panel_2` (Gerald and Yuki swapped) and `page_10_panel_1` (David and Ranjeet swapped). `page_5_panel_2` is the worst case: Yuki is on the left and Gerald on the right, so position alone (Yuki listed first) was right, and SFace overruled it. Tails then hand Yuki's lines to Gerald, which reads as the conversation in the wrong order. | Matching blends position with SFace identity (W3). The W3 spike found the blend broke none of 9 panels; this panel shows it can. SFace is weak on this art (cosine 0.1–0.56), so identity can't always overrule position. | W7.2 |
+| 4 | Bubble tail points at the wrong character | Residual after W7 (2 of 30 labelled speakers): e2e `page_10_panel_1` and golden `page_4_panel_1`, the 4-character 0.22 strip. Gerald and Yuki are seen from behind, and David is drawn where the script predicts Ranjeet, so David's tail lands on Ranjeet. | Matching is by predicted position only since W7.2 dropped SFace. Position can't tell a mirrored cast when some of it isn't visible. Fixing it needs an identity signal that works on this art (none known; the colour spike in W7 only exploited this cast's hair and skin). | Deferred (identity) |
 | 6 | Inpaint settings never reach Wan2GP | Not exercised since May: `auto` sends LoRA-free panels through a single pass. | Inpaint tasks don't send `settings_version`, so wgp forces `denoising_strength = 1.0`. `masking_strength` 0.3 locks the area outside the mask for only ~2 of 4 steps, and flux2 never pastes the original pixels back. Net effect: the whole panel is regenerated. | W11 |
 | 7 | Gibberish signage | Bar scenes: neon signs read "PICAK", "CERAID", "DORK". | Location descriptions invite signs, and the negative prompt does nothing unless NAG is on (problem 8). | W8.1 |
 | 8 | Speech bubbles painted into the art; negative prompt inert | Golden subset: 3 of 12 panels at the 2026-10-30 baseline, 2 of 12 in `w4_prompts`. e2e `page_8_panel_2` (your page 9, panel 1): two painted bubbles with non-English text ("!!/", "ちっ!") beside ours. | Klein is guidance-distilled: wgp forces `guidance_scale` to 1, so the negative prompt only acts through NAG, which needs `NAG_scale > 1`. `wan2gp.nag_scale` is exposed but untested. | W8.1 |
-| 14 | Face detector misses stylised faces and accepts junk | An earlier golden `page_6_panel_1`: Gerald's grinning face missed, a 0.53-score "face" on the floor accepted. | Hybrid YuNet + MediaPipe at threshold 0.5. Tails, attribution, face avoidance and the character-sheet crops all inherit it. | Deferred; watch in W7 |
-| 15 | Thought-bubble trailing dots are tiny and bunched | Golden `page_1_panel_2`: three dots within ~20px of the cloud. | They share the speech tail's length cap (`tail_frac` × short edge). | W7.4 |
+| 14 | Face detector misses stylised faces and accepts junk | An earlier golden `page_6_panel_1`: Gerald's grinning face missed, a 0.53-score "face" on the floor accepted. e2e `page_5_panel_1` (three at a bar, no dialogue): no faces found. | Hybrid YuNet + MediaPipe at threshold 0.5. Tails, attribution, face avoidance and the character-sheet crops all inherit it. W7 traced no lettering fault to it. | Deferred |
 | 16 | Characters listed on a panel but not drawn | e2e `page_2_panel_1` (wide crowd shot, 4 listed): only Gerald is identifiable. The 4-character 0.22 strip (golden `page_4_panel_1`, story `page_10_panel_1`) drew 2 of 4 in both golden runs, all 4 in the e2e. | Prompt-dependent: crowd and group shots let the generator drop named characters or blend them into the background. | W8.2 |
-| 17 | Captions overlap each other | e2e `page_1_panel_1` (688px wide): the top-left and top-right captions (353 and 333px wide) overlap, and the second hides "…by da". The checks also flag line 1 overlapping caption 2 there. | Each caption is sized and placed at its `pos:` on its own. Bubbles avoid captions; captions don't avoid each other. | W7.3 |
-| 18 | Bubbles cover faces | e2e `page_1_panel_1` (Gerald's thought cloud over his face), `page_2_panel_2` (Yuki's second line over Gerald's head), `page_7_panel_2`. The checks report these as "covers a face"; your review confirmed the first two. | Not investigated: the layout's face-avoidance term didn't hold on these panels. | W7.3 |
 | 19 | The upscale stage has never run | Both e2e runs skipped it. | `realesrgan-ncnn-vulkan` isn't installed or on PATH. | W9 |
-| 21 | Tails missing, or too small to see | Your review: no tails on pages 4 (panel 3), 5 (panel 4) and 7 (panel 4). The checks add `page_1_panel_1` (Gerald, cause b) and `page_10_panel_1` (Gerald, 4-character strip: his face wasn't matched, cause c). | Four causes in `text_renderer`: (a) shout and whisper bubbles never get a tail, by design (`page_4_panel_3`'s "BANDAID!"); (b) the tail is only drawn up or down, so a bubble level with its speaker's face gets none (`page_1_panel_1`'s thought cloud, golden `page_1_panel_1`'s "Like 2008?"); (c) the speaker wasn't matched to a face, so the tail is left off on purpose (the Intern, text-only by decision); (d) when drawn, the tail is a fixed 14px wide and at most 5% of the panel's short edge, which vanishes at page scale (`page_5_panel_4`, `page_7_panel_4`). | W7.4 |
-| 23 | Conversation flow unclear; tails cross other bubbles | `page_3_panel_1`: Gerald's "I have seen worse crashes." and "Much earlier." stack touching, with Yuki's "Like 2008?" level with the first, so his two lines read as one speech. "Much earlier."'s tail runs up through the bubble above it. | Layout keeps CBML order (W3) but has no minimum stagger between consecutive bubbles, and tails aren't treated as obstacles. | W7.3 (stagger), W7.4 (tails) |
-| 24 | SFX land on faces | Your page 8, panel 2 (`page_8_panel_3`): "SKREEEE" sits across Gerald's mouth. | The script says `pos:center`; SFX are drawn exactly at their anchor and, unlike bubbles, never avoid faces. In a close-up the centre is the face. | W7.3 |
 | 25 | Actions implied only by SFX or dialogue aren't drawn | `page_7_panel_1`: the SFX is "SCRIBBLE SCRIBBLE", but David isn't writing; the prompt never mentions it. | Neither the prompt builder nor the refiner sees SFX or dialogue: the prompt comes from the action, shot, mood, setting and characters only. | W8.3 |
-| 26 | The checks miss most lettering faults, and misreport missing tails | Of your review's faults, the checks caught 3 face covers, 1 caption overlap and some missing tails. Every missing tail is reported as "speaker's face not found", including `page_1_panel_1`, where Gerald's face was matched (cause 21b). Shouts and whispers are never checked, so `page_4_panel_3`'s "BANDAID!" goes unflagged. | `review._tail_issues` has one message for every cause and skips non-speech types. No checks yet for tail size at page scale, SFX on faces, bubble stagger or tails crossing bubbles. | W7.1 |
-| 27 | The e2e reviews pages at 533×800, not the 3000px that ships | `tests/e2e/outputs/e2e/pages/*.png`. Makes tail size (21d) look worse than it ships, and means you review a different page from the one that ships. | The e2e test assembles at a small page height for speed. | W7.1 |
+
+**Fixed in W7, awaiting your read** (W7 has the detail): 15 thought dots
+tiny and bunched · 17 captions overlapping · 18 bubbles covering faces ·
+21 tails missing or too small · 23 unclear conversation order, tails
+crossing bubbles · 24 SFX on faces · 26 the checks missing lettering
+faults · 27 e2e pages reviewed at 533×800. Once you've read the pages, they
+move to Closed.
 
 **Closed** (details in the archives): 1 panel dimensions · 2 text cut off at
 panel edges · 3 bubble reading order · 5 character drift · 9 panels were JPEGs
@@ -92,8 +90,8 @@ not code) · 12 tiny text in narrow panels · 13 colliding text lines.
 - **Speech bubbles stay rounded rectangles** (was problem 22: your review
   found them boxy on pages 2 and 7). `_draw_speech`, 20px corner radius.
 - **The Intern stays text-only** (was problem 20). With no reference image
-  he's drawn as a different person each time, identity matching can't place
-  him, and his lines have no tail (fail closed, cause 21c).
+  he's drawn as a different person each time, matching can't place him, and
+  his lines have no tail (fail closed).
 
 **Reviewed 2026-11-01 and left as is** (from your read of the e2e pages):
 - **Page 7, panel 4: David holding garlic bread aloft.** The script says
@@ -109,76 +107,120 @@ not code) · 12 tiny text in narrow panels · 13 colliding text lines.
 
 ## Workstreams (open, in order)
 
-### W7 — Lettering. NEXT.
+### W7 — Lettering. Built 2026-11-02; awaiting your read.
 
-Why first: your review of the e2e pages (2026-11-01) found the art and page
-layout largely fine and the lettering the weakest part, and lettering is
-most of the open faults. All of it is re-lettering, so there's no GPU and an
-iteration takes seconds. The steps run in dependency order: who speaks,
-then where bubbles go, then tails.
+**What's left: your read** of the re-lettered e2e pages,
+`tests/e2e/outputs/e2e/pages/page_001.png` … `page_010.png` (2000×3000, as
+shipped), against the done-when's last bullet. `sheet_pages.png` beside them
+has each panel raw | lettered | as placed. The "before" is
+`tests/e2e/archived_test_outputs/2026-11-01_e2e/`. When you're happy,
+problems 15, 17, 18, 21, 23, 24, 26 and 27 move to Closed and this section is
+archived.
 
-1. **Review loop on the e2e output** (problems 26, 27).
-   - First copy `tests/e2e/outputs/e2e/` to
-     `tests/e2e/archived_test_outputs/2026-11-01_e2e/`: it's the "before"
-     every problem above cites, and re-lettering overwrites it.
-   - Re-letter any project without a GPU. For example, a `--reletter`
-     option on `tools/contact_sheet.py` could run `render_text` +
-     `assemble_pages` before the checks, making the e2e output a 33-panel
-     regression set. `golden_run.py --no-generate` only covers the
-     12-panel golden subset.
-   - Assemble the e2e pages at the production size (`assembly.*` config,
-     3000px), so what you review is what ships.
-   - Make the no-tail check report its cause (no matched face, bubble level
-     with the face, shout/whisper) and cover shouts and whispers.
-   - Add a check for each fault this workstream fixes, so it stays fixed:
-     tails too small at page scale, SFX over a face, consecutive bubbles
-     without stagger, a tail crossing another bubble. Caption overlaps and
-     face covers are already checked.
-   - Record the new checks' baseline on the 33 panels before changing any
-     lettering.
-2. **Attribution** (problem 4). First, because it decides which face each
-   bubble is placed by and where its tail points.
-   - `page_5_panel_2` shows SFace overruling a correct positional match.
-   - Re-measure the blend on the e2e's 33 panels before re-tuning; the
-     blend weight was chosen on 5 golden panels. Then either require a clear
-     identity margin before position is overruled, or drop identity.
-3. **Placement** (problems 17, 18, 23, 24):
-   - captions on the same edge share its width;
-   - bubbles, clouds and SFX stay off faces (SFX may move within their
-     `pos:` zone);
-   - consecutive bubbles get a minimum stagger, so that a speaker's two
-     lines with another speaker's line between them don't read as one
-     speech.
-4. **Tails** (problems 21, 23, 15). Last, because they join each bubble's
-   final position to a face.
-   - draw tails sideways too, so a bubble level with its speaker still
-     points at them;
-   - give shouts a spike toward the speaker and whispers a dashed tail;
-   - scale the tail's width and length with the font, so it survives page
-     scale;
-   - route tails around other bubbles;
-   - give thought-bubble dots their own length;
-   - keep leaving the tail off when the speaker isn't matched (fail closed).
+**Done-when, checked 2026-11-02:**
+- The checks report no overlap, face, order, tail-size or stagger issues on
+  the e2e (at 3000px) or the golden subset: e2e 30/33 clean, golden 11/12.
+- The only missing tails are speakers whose face wasn't matched: 4 on the
+  e2e (`page_4_panel_3` Gerald and the Intern, `page_7_panel_5` Gerald from
+  behind, `page_10_panel_1` Gerald from behind) and 1 on golden
+  (`page_4_panel_1`).
+- My read of all ten pages found no overlapping text, text over heads,
+  invisible tails, SFX on faces, or unclear order. One wrong speaker
+  remains: problem 4's residual, `page_10_panel_1`, where David's tail
+  lands on Ranjeet.
 
-**Watch:** tails, attribution and face avoidance all rely on the face
-detector (problem 14). If a fault traces to a missed or junk face, pull
-problem 14 into this workstream.
+**The lettering bench** (`tools/lettering_bench.py`, ~75s, no GPU) is the
+review loop now. It re-letters three sets and tallies the checks, so a
+change is judged beyond the panels it was tuned on. You asked for this on
+2026-11-02, so fixes don't overfit the test story (e.g. by relying on this
+cast's distinct skin tones).
+- *tune*: the e2e and `w4_prompts`, re-lettered in place.
+- *holdout*: copies of the three older archived runs (57 panels, different
+  art). Checked only after a change, never while making it.
+- *synthetic*: seeded random comics run through the real pipeline. They
+  vary page layouts, aspects, casts, text within a realistic word budget,
+  every bubble type, captions, SFX and face sizes.
+- It also scores attribution against hand labels
+  (`tests/e2e/fixtures/face_labels.json`, 20 labelled panels from the e2e and
+  `w4_prompts`, keyed by image hash).
 
-**Done when**, on the e2e output (at 3000px) and the golden subset:
-- the checks report no overlap, face, order, tail-size or stagger issues;
-- the only missing tails belong to characters whose face isn't visible or
-  wasn't matched;
-- your read of the assembled e2e pages finds none of: overlapping text, text
-  over heads, missing or invisible tails, wrong speakers, unclear
-  conversation order, SFX on faces.
+| Issues (panels) | tune (45) | holdout (57) | synthetic (125) |
+|---|---|---|---|
+| clean panels, before → after | 16 → 41 | 11 → 29 | 25 → 71 |
+| face covered | 8 → 0 | 6 → 1 | 44 → 26 |
+| stagger | 5 → 0 | 6 → 0 | 10 → 1 |
+| tail too small on the page | 17 → 0 | 8 → 0 | 79 → 4 |
+| tail crossing / pointing through a box | 2 → 0 | 5 → 0 | 64 → 46 |
+| no tail | 15 → 5 | 16 → 2 | 97 → 30 |
+| overlap | 2 → 0 | 0 → 0 | 22 → 22 |
+
+- "Before" is the pre-W7 renderer with W7.1's recording, so the new checks
+  can see its output.
+- The holdout's other issues (36 `slot`, 26 `aspect`) are the June run's
+  wrong-aspect panels: a generation fault, closed as problem 1.
+- Synthetic faults cluster in crowded panels: 72 of the 94 overlap, face and
+  tail issues are in the 23 panels over 40% covered by faces and text, 3 of
+  which have more text than fits (`overflow`).
+- Full outputs: `bench_w7_before.txt` / `bench_w7_after.txt` in
+  `archived_test_outputs/2026-11-01_e2e/`. The before-file's synthetic
+  column predates the word budget; the table's synthetic "before" was rerun
+  on the same comics.
+
+**As built**, by step:
+1. **Review loop** (problems 26, 27).
+   - `contact_sheet.py --reletter` re-letters and re-assembles any project at
+     `assembly.*` size, in about 16s for the e2e's 33 panels.
+   - The e2e test now assembles at production size, and `panel_slots.json`
+     records each panel's page `scale`.
+   - Checks (`review`):
+     - `no_tail` gives its cause and covers every bubble type;
+     - new: `tail_size` (on the page, against its height), `tail_cross`
+       (into, or pointing through, another box), `stagger`, SFX in `face`,
+       and `overflow`;
+     - `face` counts a box covering a quarter of a face, or lying a quarter
+       on one.
+   - Baseline before any lettering change: e2e 12/33 clean, golden 4/12
+     (`checks_w7_baseline.txt` in the archive).
+2. **Attribution** (problem 4). Re-measured on 20 hand-labelled panels:
+   - SFace blend: 4 speakers wrong.
+   - Position only: 2 wrong, 1 unplaced.
+   - A margin gate can't separate right from wrong: SFace's wrong swap on
+     `page_5_panel_2` gains 0.29, as much as the right fix W3 tuned on.
+   - **Identity dropped**: `face_identity` and its model download are gone.
+   - A hair/skin colour score was tried and rejected as overfitting.
+3. **Placement** (17, 18, 23, 24).
+   - Captions on one edge share its width; two at one anchor stack.
+   - SFX move within their `pos:` zone off faces and captions.
+   - Covering a face is the layout's strongest cost.
+   - Within a Z-path band each bubble starts a text line lower than the last.
+   - A bubble still on a face or SFX is re-wrapped narrower (×0.7, ×0.5),
+     and the narrower layout is kept if it costs less.
+   - Thought clouds are drawn inside their box (they overshot by up to a
+     sixth).
+4. **Tails** (21, 23, 15).
+   - Every type gets one: speech triangle, whisper dashed, shout spike,
+     thought dots.
+   - They leave by whichever side faces the speaker, sideways too.
+   - Sized from the font: 0.8× wide, 1.3–2.5× long, thought trails 1.8–3.5×;
+     `text.tail_scale` replaces `text.tail_frac`. They stop short of the face.
+   - Routed so neither the tail nor its line of sight to the face runs
+     through another box; the layout pays for crossings it can't route
+     round.
+   - A speaker's consecutive same-type lines are linked balloons: the tail
+     on the first, a connector to each later one.
+   - Unmatched speakers still get no tail (fail closed).
+
+**Left open by W7:**
+- problem 4's residual (above);
+- one held-out face cover (June `page_2_panel_4`);
+- the crowded synthetic panels.
 
 ### W8 — Generation fixes
 
 The e2e faults that come from the art itself. Each item is a golden A/B run
 against `w4_prompts` on AC power. Keep a change only if the consistency bar
 still holds. Every knob is already a config value (`golden_run.py --set`).
-W7 is CPU-only, so these runs can go in the background while W7 is under
-way. The sign-off run re-checks the lettering on whatever W8 regenerates.
+The sign-off run re-checks the lettering on whatever W8 regenerates.
 
 1. **NAG** (problems 7, 8). Try `--set wan2gp.nag_scale=3`, then 2 and 5.
    Confirm `NAG_scale` reached wgp from the panels' settings (Reference,
@@ -363,7 +405,11 @@ Reference, "AI Toolkit with Klein".
 - Stay-resident Wan2GP worker (old §14.10). Reconsider if golden iterations
   stay slow after W10.3.
 - SAM segmentation (old §14.7).
-- Comic-tuned face detector (old §14.2): problem 14, which W7 may pull in.
+- Comic-tuned face detector (old §14.2): problem 14. W7 traced no lettering
+  fault to it.
+- A face-identity signal that works on comic art, for problem 4's mirrored
+  casts. SFace didn't (W7.2). Judge any candidate on the bench's labelled
+  panels and on art it wasn't tuned on.
 - An automated consistency score (CLIP crop-vs-reference similarity), only
   if manual scoring becomes the bottleneck.
 
@@ -442,7 +488,7 @@ Traced in the Pinokio install (`C:\pinokio\api\ai-toolkit.git\app`, commit
 
 | Changed | Run | Time |
 |---|---|---|
-| Text rendering / bubble layout | `python tools/golden_run.py --no-generate --out w4_prompts` (re-letters that run's panels in place) | seconds |
+| Text rendering / bubble layout | `python tools/lettering_bench.py --sets tune` while working, then the full `python tools/lettering_bench.py` (tune, holdout, synthetic; see W7) before keeping it. `python tools/contact_sheet.py <project> --reletter` re-letters any one project | ~20s / ~75s |
 | Anything upstream of generation (bridge, refs, `refs`/`wan2gp` config) | `python tools/golden_run.py --force --out <name> --baseline w4_prompts [--set KEY=VALUE ...]` | ~10 min on AC (582s measured); ~23 min on battery |
 | Character descriptions or the refiner | the same with `--refine`, then freeze `tests/e2e/outputs/golden/<name>/project/prompts/*.txt` into `tests/e2e/fixtures/golden_prompts/` if it wins | + ~1 min |
 | A character LoRA (training settings, its training set) | `python tools/train_lora.py train <project> <ID> --force`, then a golden run with `--lora <ID>=<path>` (W11, step 4) | training: unmeasured; + ~10 min |
@@ -463,7 +509,7 @@ for any already-rendered project, e.g. after a full e2e run.
 Everything is under `tests/e2e/`, and run folders are gitignored:
 - the inputs are in `fixtures/`;
 - live runs go to `outputs/`: `e2e/`, `golden/<name>/`, `live/`,
-  `live_queue/`;
+  `live_queue/`, and the lettering bench's `holdout/` and `synthetic/`;
 - old runs kept on purpose go to `archived_test_outputs/`, date-prefixed.
 
 `golden_run.py` takes a bare run name for `--out`/`--baseline` (a folder in
@@ -512,6 +558,9 @@ or to time panels individually:
    is the exception (hard dep).
 10. **`_build_wangp_task` is the sole Wan2GP adapter.** Wan2GP field semantics
     live there and nowhere else.
+11. **Don't fit the test story.** Tune on one set and confirm on others it
+    never saw (the lettering bench's holdout and synthetic sets). Reject
+    signals that only work because of this cast or script.
 
 ### Pipeline + contracts
 
