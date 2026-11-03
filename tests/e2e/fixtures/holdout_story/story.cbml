@@ -1,0 +1,71 @@
+## The Clockmaker's Package
+aspect: us-comic
+author: lazycomics test suite
+genre: steampunk noir
+description: Held-out script for tools/golden_run.py --story and tools/refiner_bench.py. A different cast, setting and style from story.cbml, so prompt and generation changes are checked beyond the story they were tuned on.
+
+PAGE preset:grid-2x2
+
+PANEL A
+loc: STEAMPUNK_ALLEY
+chars: NOVA, REX, MARLO
+shot: medium shot under a flickering gas lamp
+mood: tense
+> Nova and Rex corner Marlo against a brick wall.
+NOVA: "Where is the package, Marlo?"
+MARLO: "I swear I never opened it."
+REX: ~He is lying.~
+
+PANEL B
+loc: STEAMPUNK_ALLEY
+chars: REX
+shot: low angle
+mood: ominous
+> Rex stands at the heavy iron door of the clock workshop.
+[sfx pos:top-right color:#cc8800] KNOCK KNOCK
+
+PANEL C
+loc: STEAMPUNK_ALLEY
+chars: NOVA, REX
+shot: over-the-shoulder two-shot
+mood: grim
+> Nova unfolds a crumpled letter while Rex looks over her shoulder.
+NOVA: "It has the clockmaker's seal on it."
+REX: "Then we know who sent it."
+
+PANEL D
+loc: CLOCK_WORKSHOP
+chars: MARLO
+shot: close-up
+mood: panicked
+> Marlo backs away from the workbench, hands raised.
+MARLO: !"It was not my fault!"!
+
+PAGE preset:wide-top
+
+PANEL A
+loc: STEAMPUNK_ALLEY
+chars: NOVA, REX, MARLO
+shot: wide shot down the length of the alley
+mood: hurried
+> The three of them hurry through the alley as steam vents burst around them.
+[caption bg:#101010 color:#e0d0a0 pos:top-left] Midnight.
+[sfx pos:bottom-right color:#888888] HISSSS
+
+PANEL B
+loc: CLOCK_WORKSHOP
+chars: NOVA
+shot: medium shot
+mood: uneasy
+> Nova scans the walls of ticking clocks.
+NOVA: ~Too many clocks.~
+
+PANEL C
+loc: CLOCK_WORKSHOP
+chars: REX, MARLO, NOVA
+shot: medium group shot
+mood: tense standoff
+> Rex blocks the workshop door while Marlo edges toward the back and Nova watches them both.
+[sfx pos:top-center color:#cc8800] TICK TOCK
+REX: "Nobody leaves until the clocks stop."
+MARLO: "They never stop."

@@ -33,6 +33,7 @@ mood: energetic, corporate chaos, comedic tension
 > Phones ring.
 > Coffee flows constantly.
 > Gerald glides unnaturally calmly through the chaos holding a perfectly untouched coffee.
+> In the background, Yuki and Ranjeet work at their desks and David watches from his glass-walled office.
 [caption bg:#111111 color:#88ddff pos:top-left] Monday. 8:14 AM.
 [sfx pos:bottom-center color:#222222] RING RING RING
 
@@ -155,7 +156,7 @@ PAGE grid:2x3
 PANEL A
 loc: THE_BAR
 chars: GERALD, YUKI, RANJEET
-shot: warm wide shot of a cozy after-work bar with neon signs and rain outside
+shot: warm wide shot of a cozy after-work bar with neon light shapes and rain outside
 mood: relaxed, character-focused, sitcom energy
 > The trio sits in a dimly lit booth surrounded by exhausted finance workers.
 [caption bg:#222222 color:#ffddaa pos:top-left] Later that night.

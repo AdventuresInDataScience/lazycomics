@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -165,6 +167,24 @@ def test_empty_panel_produces_empty_prompt(env):
 
 
 @_with_env
+def test_signage_in_setting_warns_once_per_location(env):
+    # Problem 7: signs come out as gibberish lettering, so say so up front.
+    for pid in ("p1", "p2"):
+        _write_enriched(env.project, pid, loc_identifier="BAR",
+                        loc_description="dim bar, neon signs glowing")
+    _write_enriched(env.project, "p3", loc_identifier="ALLEY",
+                    loc_description="rain-slicked alley, abstract neon light shapes",
+                    shot_hint="wide shot past a billboard")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        build_prompts(env.project)
+    warnings = [line for line in out.getvalue().splitlines() if line.startswith("[prompts]")]
+    assert len(warnings) == 2
+    assert "BAR: the setting" in warnings[0] and "'signs'" in warnings[0]
+    assert "p3: the shot" in warnings[1] and "'billboard'" in warnings[1]
+
+
+@_with_env
 def test_style_prefix_included(env):
     register_style(env.project, prompt_prefix="silver age comic art, bold inks")
     _write_enriched(env.project, "p1", action="x")
@@ -219,7 +239,8 @@ def test_character_description_used_when_no_lora(env):
     )
     build_prompts(env.project)
     text = (env.project.prompts_dir / "p1.txt").read_text()
-    assert "blue hair, leather jacket" in text
+    # Labelled, so actions and the group cue that name characters bind to it.
+    assert "Nova (blue hair, leather jacket)" in text
 
 
 @_with_env
@@ -247,6 +268,50 @@ def test_multiple_characters_each_emitted(env):
     assert "nova_v1" in text
     assert "bald, scarred" in text
     assert "They face off" in text
+
+
+def _line(character, text="Hello there.", bubble_type="speech"):
+    return {"character": character, "text": text, "bubble_type": bubble_type}
+
+
+@_with_env
+def test_group_cue_names_three_or_more_characters_in_order(env):
+    # Problem 16: group shots whose tails must tell speakers apart name
+    # everyone, in bubble_layout (CBML) order.
+    _write_enriched(env.project, "p1",
+        characters=[_char("NOVA"), _char("REX"), _char("OLD_MAN")],
+        dialogue_lines=[_line("REX"), _line("OLD_MAN", bubble_type="thought")],
+        action="They wait",
+    )
+    build_prompts(env.project)
+    text = (env.project.prompts_dir / "p1.txt").read_text()
+    cue = "three people, left to right: Nova, Rex and Old Man, each clearly visible"
+    assert cue in text
+    assert text.index(cue) < text.index("They wait")
+
+
+@_with_env
+def test_no_group_cue_for_two_characters(env):
+    _write_enriched(env.project, "p1",
+        characters=[_char("NOVA"), _char("REX")],
+        dialogue_lines=[_line("NOVA"), _line("REX")],
+        action="They wait",
+    )
+    build_prompts(env.project)
+    assert "left to right" not in (env.project.prompts_dir / "p1.txt").read_text()
+
+
+@_with_env
+def test_no_group_cue_unless_two_of_the_cast_speak(env):
+    # The order only matters to tails, so a panel with under two speakers
+    # among its cast (a narrator isn't one) gets no cue.
+    chars = [_char("NOVA"), _char("REX"), _char("OLD_MAN")]
+    _write_enriched(env.project, "p1", characters=chars, action="They wait")
+    _write_enriched(env.project, "p2", characters=chars, action="They wait",
+                    dialogue_lines=[_line("REX"), _line("REX", "Again."), _line("NARRATOR")])
+    build_prompts(env.project)
+    for pid in ("p1", "p2"):
+        assert "left to right" not in (env.project.prompts_dir / f"{pid}.txt").read_text()
 
 
 # ---------------------------------------------------------------------------

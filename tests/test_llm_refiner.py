@@ -51,9 +51,11 @@ class _Env:
         self.project = create_project("p1", cbml, base_dir=self.root)
 
         # Intercept _call_llm. Each test can set self.response (str | None)
-        # before triggering refinement; calls accumulate in self.calls.
+        # before triggering refinement, or self.responses (one per call, in
+        # order); calls accumulate in self.calls.
         self.calls: list[dict] = []
         self.response: str | None = "REFINED OUTPUT"
+        self.responses: list[str | None] = []
 
         self._orig_call_llm = llm_refiner._call_llm
 
@@ -63,7 +65,7 @@ class _Env:
                 "headers": dict(headers),
                 "body": json.loads(json.dumps(body)),  # deep copy
             })
-            return self.response
+            return self.responses.pop(0) if self.responses else self.response
 
         llm_refiner._call_llm = fake_call_llm
 
@@ -404,6 +406,131 @@ def test_user_message_includes_enriched_context(env):
     # And the prompt itself still appears.
     assert "Prompt to refine:" in user_msg
     assert "the prompt" in user_msg
+
+
+@_with_env
+def test_user_message_includes_dialogue_and_sfx(env):
+    # Problem 25: the refiner sees what's lettered so it can draw the implied action.
+    env.write_prompt("p1", "the prompt")
+    env.write_enriched(
+        "p1",
+        dialogue_lines=[
+            {"character": "NOVA", "text": "Run!", "bubble_type": "shout"},
+            {"character": "REX", "text": "", "bubble_type": "speech"},
+        ],
+        sfx_lines=[{"text": "SCRIBBLE SCRIBBLE", "color": "#444444", "position": "top-right"}],
+    )
+    refine_prompts_with_llm(env.project)
+    user_msg = env.calls[0]["body"]["messages"][1]["content"]
+    assert "- Dialogue (lettered later" in user_msg
+    assert 'NOVA (shout): "Run!"' in user_msg
+    assert "REX" not in user_msg
+    assert "- Sound effects (lettered later" in user_msg
+    assert "never the word): SCRIBBLE SCRIBBLE" in user_msg
+
+
+@_with_env
+def test_user_message_omits_text_lines_when_panel_has_none(env):
+    env.write_prompt("p1", "the prompt")
+    env.write_enriched("p1", action="Nova sprints")
+    refine_prompts_with_llm(env.project)
+    user_msg = env.calls[0]["body"]["messages"][1]["content"]
+    assert "Dialogue:" not in user_msg
+    assert "Sound effects:" not in user_msg
+
+
+def _write_lettered_panel(env):
+    env.write_prompt("p1", "Nova tears off her tie. Phones ring nearby.")
+    env.write_enriched(
+        "p1",
+        dialogue_lines=[{"character": "NOVA", "text": "Not again, please!", "bubble_type": "shout"},
+                        {"character": "REX", "text": "Fair.", "bubble_type": "speech"}],
+        sfx_lines=[{"text": "KRRK", "color": "#000", "position": "center"},
+                   {"text": "RING", "color": "#000", "position": "top-left"}],
+    )
+
+
+@_with_env
+def test_quoted_sfx_is_retried_with_the_reason(env):
+    # Problem 8: quoted lettering gets painted, so the refiner asks again once.
+    _write_lettered_panel(env)
+    env.responses = ["Nova tears off her tie (KRRK).", "Nova tears off her tie with a snap."]
+    refine_prompts_with_llm(env.project)
+    assert len(env.calls) == 2
+    retry = env.calls[1]["body"]["messages"]
+    assert retry[-2] == {"role": "assistant", "content": "Nova tears off her tie (KRRK)."}
+    assert "KRRK" in retry[-1]["content"]
+    assert (env.project.prompts_dir / "p1.txt").read_text() == "Nova tears off her tie with a snap.\n"
+
+
+@_with_env
+def test_quoted_dialogue_twice_keeps_original(env):
+    _write_lettered_panel(env)
+    env.response = 'Nova shouts "not again please" at the phones.'
+    result = refine_prompts_with_llm(env.project)
+    assert len(env.calls) == 2
+    assert result == {}
+    assert (env.project.prompts_dir / "p1.txt").read_text() == "Nova tears off her tie. Phones ring nearby."
+
+
+@_with_env
+def test_prose_and_already_present_words_are_not_quotes(env):
+    # "ring" in prose isn't the lettered RING; a two-word-or-shorter line
+    # ("Fair.") is too common to count; text the original had isn't new.
+    _write_lettered_panel(env)
+    env.response = "Phones ring as Nova, fair-skinned, tears off her tie."
+    refine_prompts_with_llm(env.project)
+    assert len(env.calls) == 1
+    assert "fair-skinned" in (env.project.prompts_dir / "p1.txt").read_text()
+
+
+_CUE = "three people, left to right: Nova, Rex and Ivy, each clearly visible"
+_GROUP_PANEL = {
+    "characters": [{"identifier": "NOVA", "visual_description": "short blue hair"},
+                   {"identifier": "REX", "visual_description": ""},
+                   {"identifier": "IVY", "visual_description": ""}],
+    "dialogue_lines": [{"character": "NOVA", "text": "Go.", "bubble_type": "speech"},
+                       {"character": "REX", "text": "No.", "bubble_type": "speech"}],
+}
+
+
+@_with_env
+def test_dropped_cue_and_changed_description_are_retried(env):
+    # The cue (problem 16) and the descriptions (W4) must survive verbatim.
+    env.write_prompt("p1", f"{_CUE}, Nova (short blue hair), Rex, Ivy, they argue in the rain")
+    env.write_enriched("p1", **_GROUP_PANEL)
+    env.responses = ["Three people argue in the rain, Nova with blue hair.",
+                     f"{_CUE.capitalize()}. Nova (short blue hair), Rex and Ivy argue in the rain."]
+    refine_prompts_with_llm(env.project)
+    assert len(env.calls) == 2
+    retry = env.calls[1]["body"]["messages"][-1]["content"]
+    assert f'"{_CUE}"' in retry
+    assert "NOVA's description" in retry and '"short blue hair"' in retry
+    assert (env.project.prompts_dir / "p1.txt").read_text().startswith("Three people, left to right")
+
+
+@_with_env
+def test_added_sign_words_are_retried_but_kept_ones_are_not(env):
+    # Problem 7: a refiner that adds signage invites gibberish lettering.
+    env.write_prompt("p1", "Nova waits by a bar, setting: rain, neon signs")
+    env.write_enriched("p1")
+    env.responses = ["Nova waits by a bar under a sign and a billboard, rain, neon signs.",
+                     "Nova waits by a bar in the rain, neon signs."]
+    refine_prompts_with_llm(env.project)
+    assert len(env.calls) == 2
+    retry = env.calls[1]["body"]["messages"][-1]["content"]
+    assert '"billboard"' in retry and '"sign"' not in retry  # "signs" was in the original
+    assert (env.project.prompts_dir / "p1.txt").read_text() == "Nova waits by a bar in the rain, neon signs.\n"
+
+
+@_with_env
+def test_rules_the_original_already_broke_are_not_enforced(env):
+    # A hand-edited prompt without the cue or descriptions isn't rejected for it.
+    env.write_prompt("p1", "they argue in the rain")
+    env.write_enriched("p1", **_GROUP_PANEL)
+    env.response = "Three people argue in the pouring rain."
+    refine_prompts_with_llm(env.project)
+    assert len(env.calls) == 1
 
 
 @_with_env

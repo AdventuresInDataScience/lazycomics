@@ -6,7 +6,7 @@ Usage::
     python tools/golden_run.py [--out NAME] [--force] [--no-generate]
                                [--base-resolution N] [--baseline NAME]
                                [--fresh-prompts | --refine] [--set KEY=VALUE ...]
-                               [--lora CHARACTER=PATH ...]
+                               [--lora CHARACTER=PATH ...] [--story DIR]
 
 The golden subset is ``tests/e2e/fixtures/golden.cbml``: three page blocks
 cut from the e2e story (see ``GOLDEN_PAGES``) with the story's registered
@@ -50,6 +50,13 @@ Iterating:
   panels go down the inpaint path, whose settings don't reach Wan2GP yet
   (Docs/PLAN.md problem 6): add ``--set enricher.multi_char_strategy=single``
   or judge solo panels only.
+* ``--story DIR`` runs another script instead of the golden subset, e.g.
+  ``tests/e2e/fixtures/holdout_story``: a script with its own cast and
+  setting, to check that a generation change holds beyond the e2e story.
+  ``DIR`` holds ``story.cbml``, ``Style.txt`` (+ ``Style.png``) and
+  ``characters/<ID>.txt`` / ``locations/<ID>.txt``, each with an optional
+  ``<ID>.png`` reference. It has no frozen prompts, so it needs
+  ``--fresh-prompts`` or ``--refine``.
 """
 
 from __future__ import annotations
@@ -102,8 +109,11 @@ def main(argv: list[str] | None = None) -> int:
     for item in overrides:
         _override(config, item)
     loras = [_lora_arg(item) for item in args.lora]  # checked before any work
+    story = Path(args.story).resolve() if args.story else None
+    if story and not (args.fresh_prompts or args.refine):
+        raise SystemExit("--story has no frozen prompts: add --fresh-prompts or --refine")
 
-    project = _open_project(out / "project")
+    project = _open_project(out / "project", story)
     for name, path in loras:
         lc.set_lora(project, "character", name, path,
                     weight=cfg_get(config, "ai_toolkit.lora_weight", 1.0), trigger_word=name)
@@ -129,7 +139,9 @@ def main(argv: list[str] | None = None) -> int:
     reletter(project, config, panels)
     issues = write_sheets(project, out, baseline=baseline)
 
-    report = _format_report(panels, issues, gen_s, [] if args.force else reused, args)
+    pages = GOLDEN_PAGES if story is None else {
+        page: "" for page in sorted({review.panel_sort_key(p)[0] for p in panels})}
+    report = _format_report(panels, issues, gen_s, [] if args.force else reused, args, pages)
     (out / "report.txt").write_text(report, encoding="utf-8")
     print("\n" + report)
     print(f"sheets: {out / 'sheet_pages.png'}\n        {out / 'sheet_characters.png'}")
@@ -152,6 +164,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                     help="override a config value, e.g. wan2gp.default_steps=8 (repeatable)")
     ap.add_argument("--lora", action="append", default=[], metavar="CHARACTER=PATH",
                     help="attach a trained LoRA to a character for this run (repeatable)")
+    ap.add_argument("--story", metavar="DIR",
+                    help="run this story fixture instead of the golden subset (see above)")
     return ap.parse_args(argv)
 
 
@@ -198,20 +212,23 @@ def _unload_llm(config: dict) -> None:
         print(f"[golden] couldn't unload the LLM ({e}); generation may be slower")
 
 
-def _open_project(project_dir: Path) -> lc.Project:
-    """Load the golden project, creating it from the fixtures on first run.
+def _open_project(project_dir: Path, story: Path | None = None) -> lc.Project:
+    """Load the golden project (or ``story``'s), creating it on first run.
 
     The CBML and assets are refreshed from the fixtures every run (asset
     registration is idempotent), so fixture edits are picked up without
     wiping generated panels.
     """
+    cbml = story / "story.cbml" if story else GOLDEN_CBML
     if (project_dir / "manifest.json").is_file():
         project = lc.load_project(project_dir)
-        shutil.copy2(GOLDEN_CBML, project.cbml_path)
+        shutil.copy2(cbml, project.cbml_path)
     else:
         project_dir.parent.mkdir(parents=True, exist_ok=True)
-        project = lc.create_project(project_dir.name, GOLDEN_CBML,
-                                    base_dir=project_dir.parent)
+        project = lc.create_project(project_dir.name, cbml, base_dir=project_dir.parent)
+    if story:
+        register_story_assets(project, story)
+        return project
 
     for name in ["DAVID", "GERALD", "INTERN", "RANJEET", "YUKI"]:
         png = FIXTURES / f"{name}.png"
@@ -228,7 +245,23 @@ def _open_project(project_dir: Path) -> lc.Project:
     return project
 
 
-def _format_report(panels, issues, gen_s, reused, args) -> str:
+def register_story_assets(project: lc.Project, story: Path) -> None:
+    """Register a ``--story`` folder's characters, locations and style."""
+    def refs(txt: Path) -> list[Path]:
+        png = txt.with_suffix(".png")
+        return [png] if png.is_file() else []
+
+    for txt in sorted((story / "characters").glob("*.txt")):
+        lc.register_character(project, txt.stem, description=txt.read_text().strip(),
+                              reference_images=refs(txt))
+    for txt in sorted((story / "locations").glob("*.txt")):
+        lc.register_location(project, txt.stem, description=txt.read_text().strip(),
+                             reference_images=refs(txt))
+    style = story / "Style.txt"
+    lc.register_style(project, prompt_prefix=style.read_text().strip(), reference_images=refs(style))
+
+
+def _format_report(panels, issues, gen_s, reused, args, pages) -> str:
     lines = ["golden run: " + time.strftime("%Y-%m-%d %H:%M")]
     flags = [f"--{k.replace('_', '-')}={item}" for k, v in vars(args).items()
              if v not in (None, False) and k != "out"
@@ -242,8 +275,8 @@ def _format_report(panels, issues, gen_s, reused, args) -> str:
                      + (f"; reused {len(reused)} existing (pass --force to regenerate)" if reused else ""))
     clean = sum(1 for p in panels if not issues[p])
     lines.append(f"checks: {clean}/{len(panels)} panels clean")
-    for page, about in GOLDEN_PAGES.items():
-        lines.append(f"\npage {page}  ({about})")
+    for page, about in pages.items():
+        lines.append(f"\npage {page}" + (f"  ({about})" if about else ""))
         for pid in (p for p in panels if review.panel_sort_key(p)[0] == page):
             found = issues[pid]
             lines.append(f"  {pid}: " + ("ok" if not found else str(found[0])))

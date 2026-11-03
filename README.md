@@ -97,6 +97,25 @@ print(f"Done: {output}")
 A runnable demo with placeholder data is in
 [`examples/basic_usage.py`](examples/basic_usage.py).
 
+## Writing descriptions
+
+What the image model is told decides what it draws:
+
+- **Characters:** state an age band, hair colour and style, and an outfit
+  that match the reference image. Loosely described characters drift
+  between panels.
+- **Signs, posters and banners:** describe them by shape and light
+  ("abstract neon light shapes"), never as signs. The model fills any sign
+  with gibberish lettering. `build_prompts` warns when a location or a shot
+  mentions one.
+- **Who stands where:** list a panel's `chars:` left to right as you want
+  them drawn: the lettering points each speaker's tail on that assumption.
+  Panels with three or more characters, two or more of whom speak, get a
+  "four people, left to right: …" cue in that order.
+- **Dialogue and sound effects** are never put in the prompt (the model
+  would paint them in), but the LLM refiner reads them to draw the action
+  they imply, such as a character writing under a "SCRIBBLE" effect.
+
 ## Configuration
 
 Optional `lazycomics_config.yaml` in the current directory (or your
@@ -154,21 +173,27 @@ tests/
     │   ├── golden.cbml           12-panel subset, used by tools/golden_run.py
     │   ├── <NAME>.txt / .png     character, location and style descriptions + refs
     │   ├── golden_prompts/       frozen prompts, so golden runs are comparable
-    │   └── face_labels.json      hand labels: who is where, for scoring attribution
+    │   ├── face_labels.json      hand labels: who is where, for scoring attribution
+    │   └── holdout_story/        a second, 7-panel script with its own cast, setting
+    │                             and style, for checking changes beyond story.cbml
     ├── outputs/                  gitignored; each run replaces its own folder
     │   ├── e2e/                  test_integration_e2e.py's project
     │   ├── golden/<name>/        tools/golden_run.py --out <name>
     │   ├── holdout/, synthetic/  tools/lettering_bench.py's re-lettered sets
+    │   ├── refiner_bench/        tools/refiner_bench.py's scripts and prompts
     │   └── live/, live_queue/    the smoke tests
     └── archived_test_outputs/    gitignored; old runs kept on purpose, date-prefixed
 tools/                        golden_run.py, contact_sheet.py, lettering_bench.py,
-                              train_lora.py, profile_architectures.py
+                              refiner_bench.py, train_lora.py, profile_architectures.py
 ```
 
 ```bash
 pytest tests --ignore=tests/e2e                     # unit tests, ~1 min
 python tests/e2e/test_wan2gp_live_queue.py          # bridge smoke test, minutes
-python tools/golden_run.py --force --out NAME --baseline w4_prompts   # golden subset, ~10 min
+python tools/golden_run.py --force --out NAME --baseline w8_frozen    # golden subset, ~10 min
+python tools/golden_run.py --story tests/e2e/fixtures/holdout_story --refine --force --out NAME
+                                                    # the held-out script, ~8 min
+python tools/refiner_bench.py                       # refiner rules on synthetic + held-out scripts, LLM only, ~9 min
 pytest tests/e2e/test_integration_e2e.py -v -s      # full e2e, 30+ min
 python tools/contact_sheet.py tests/e2e/outputs/e2e [--reletter]   # sheets + checks for any project
 python tools/lettering_bench.py                     # lettering checks on tuning, held-out + synthetic panels, ~75s
