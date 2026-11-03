@@ -16,7 +16,13 @@
 assembly:
   # Height of one physical page in pixels. Width is derived from
   # `comic.aspect` in the CBML, so the page aspect is always preserved.
+  # These are the pages the .cbz ships (screen reading).
   page_height_px: 3000
+
+  # Height of the print copy of every page, written to pages_print/: the
+  # same layout, gutters scaled to match. 6000 is ~600 DPI at US comic trim
+  # size (10.25in tall); 3000 is already ~300 DPI. 0 skips the print pages.
+  print_page_height_px: 6000
 
   # Gap between adjacent panel cells, in pixels. No outer margin —
   # gutters only appear between cells.
@@ -137,8 +143,8 @@ wan2gp:
   #      filename, or via Export Settings) and set `architecture` to it.
   #   2. Flux Dev typically wants more steps (e.g. default_steps: 20-28) and a
   #      guidance_scale around 3.5-4.0 — tune on a test page.
-  #   3. To claw back the speed, drop `base_resolution` (e.g. 768) and lean on
-  #      the Real-ESRGAN upscaler below to restore final page resolution.
+  #   3. To claw back the speed, drop `base_resolution` (e.g. 768): the
+  #      upscaler below enlarges every panel 4x before lettering anyway.
   #   4. Benchmark before committing:
   #        python tools/profile_architectures.py <project_dir> flux2_klein_9b <flux_dev_model_type>
   #      (project must be enriched + prompted + refs-prepared first).
@@ -260,28 +266,21 @@ ai_toolkit:
 
 
 # ---------------------------------------------------------------------------
-# Real-ESRGAN upscaler  (src/lazycomics/upscaler.py)
+# Panel upscaler  (src/lazycomics/upscaler.py)
 # ---------------------------------------------------------------------------
-# Upscales assembled pages. Requires the realesrgan-ncnn-vulkan binary
-# (portable, no Python/CUDA needed). Download from:
-# https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases
+# upscale_panels enlarges every generated panel (panels/ -> panels_upscaled/)
+# before lettering, so assembly only ever shrinks art and lettering is drawn
+# at full size. Panels are generated at wan2gp.base_resolution (1024px) and
+# need up to ~3x for the 3000px pages and ~6x for the print pages.
 #
-# NOTE: wan2gp.base_resolution above controls the IMAGE GENERATION
-# resolution (long edge of each panel). The final print resolution is
-# determined by the page assembly grid × this upscale factor.
-# e.g. base_resolution: 1024 + 2×3 grid + 4× upscale ≈ 8192×12288px
+# Runs an ONNX model in-process with onnxruntime (pip install
+# lazycomics[upscale]; on Windows that's onnxruntime-directml, which uses the
+# GPU). The model's scale is read off the model. Chosen in W9:
+# realesrgan-x4plus-anime (BSD-3), ~2s a panel on an RTX 3080 Laptop.
+# Download + one-off ONNX export: README, "Upscaling". No default: required.
 upscaler:
-  # Path to the binary (or just the name if it's on PATH).
-  executable: realesrgan-ncnn-vulkan
-
-  # Model name. Options:
-  #   realesrgan-x4plus-anime  — anime/illustration 4x (best for comics)
-  #   realesrgan-x4plus        — general photography 4x
-  #   realesr-animevideov3     — anime 2x/3x/4x
-  model: realesrgan-x4plus-anime
-
-  # Upscale factor (fixed by model: 4 for x4plus variants).
-  scale: 4
+  # Absolute path to the ONNX model.
+  model_path: C:\Users\malha\AppData\Local\lazycomics\upscalers\RealESRGAN_x4plus_anime_6B.onnx
 
 # ---------------------------------------------------------------------------
 # Text overlay rendering  (src/lazycomics/text_renderer.py)

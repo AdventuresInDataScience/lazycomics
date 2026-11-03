@@ -571,8 +571,48 @@ def test_panel_slots_record_written(env):
     assert abs((x1 - x0) - 400) <= 2
     # Each visible panel px lands on 1.5 page px (600 -> 900 tall).
     assert rec["scale"] == 1.5
-    # Nothing but page images in pages/ (the upscaler feeds it to Real-ESRGAN).
+    # Nothing but page images in pages/.
     assert all(p.suffix == ".png" for p in env.project.pages_dir.iterdir())
+
+
+@_with_env
+def test_print_pages_are_the_same_pages_larger(env):
+    import json
+    # Two panels side by side, a 20px gutter between, on a 600x900 page.
+    env.make_panel("page_1_panel_1", 290, 900, (255, 0, 0))
+    env.make_panel("page_1_panel_2", 290, 900, (0, 0, 255))
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1)),
+                              _panel("B", _slot(2, 2, 1, 1))])])
+    _assemble_from_comic(env.project, comic, page_height_px=900, gutter_px=20,
+                         print_page_height_px=1800)
+
+    screen = Image.open(env.project.pages_dir / "page_001.png")
+    printed = Image.open(env.project.pages_print_dir / "page_001.png")
+    assert printed.size == (1200, 1800)
+    # Same layout, gutter included (40px at twice the size).
+    assert screen.getpixel((300, 450)) == printed.getpixel((600, 900)) == (255, 255, 255)
+    assert printed.getpixel((578, 900))[0] > 200 and printed.getpixel((622, 900))[2] > 200
+    # The slot record describes the screen pages only.
+    slots = json.loads((env.project.base_dir / "panel_slots.json").read_text())
+    assert slots["page_1_panel_1"]["scale"] == 1.0
+
+
+@_with_env
+def test_print_spread_splits_into_physical_pages(env):
+    env.make_panel("page_1_panel_1", 1200, 900, (10, 200, 10))
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1))], span=2)])
+    _assemble_from_comic(env.project, comic, page_height_px=900, print_page_height_px=1800)
+    names = sorted(p.name for p in env.project.pages_print_dir.iterdir())
+    assert names == ["page_001.png", "page_002.png"]
+    assert Image.open(env.project.pages_print_dir / "page_002.png").size == (1200, 1800)
+
+
+@_with_env
+def test_no_print_pages_when_off(env):
+    env.make_panel("page_1_panel_1", 600, 900, (10, 10, 10))
+    comic = _comic([_page(0, [_panel("A", _slot(1, 1, 1, 1))])])
+    _assemble_from_comic(env.project, comic, page_height_px=900, print_page_height_px=0)
+    assert list(env.project.pages_print_dir.iterdir()) == []
 
 
 @_with_env

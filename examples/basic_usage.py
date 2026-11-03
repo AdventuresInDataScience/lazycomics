@@ -90,7 +90,7 @@ NOVA: ~No. No, no, no.~
 """
 
 cbml_path = WORKSPACE / "story.cbml"
-cbml_path.write_text(CBML_TEXT)
+cbml_path.write_text(CBML_TEXT, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +198,10 @@ print(f"Placeholder panels written → {project.panels_dir}/")
 
 # ---------------------------------------------------------------------------
 # 8. Render text (bubbles + captions + SFX onto each panel)
+#
+# The real pipeline first upscales the panels 4x, so the lettering is drawn
+# at full size: cc.upscale_panels(project). Skipped here: it needs the ONNX
+# model (README, "Upscaling").
 # ---------------------------------------------------------------------------
 
 rendered = cc.render_text(project)
@@ -208,8 +212,9 @@ print(f"Text rendered onto {len(rendered)} panel(s) → {project.panels_text_dir
 # 9. Assemble panels into pages
 # ---------------------------------------------------------------------------
 
-pages = cc.assemble_pages(project, page_height_px=1500, gutter_px=12)
-print(f"Pages assembled: {len(pages)} → {project.pages_dir}/")
+# Print-size copies go to pages_print/ (6000px by default; small here).
+pages = cc.assemble_pages(project, page_height_px=1500, print_page_height_px=3000, gutter_px=12)
+print(f"Pages assembled: {len(pages)} → {project.pages_dir}/ (print copies → {project.pages_print_dir}/)")
 for page_num, path in pages.items():
     img = Image.open(path)
     print(f"    page {page_num:>2}: {path.name}  ({img.size[0]}×{img.size[1]})")

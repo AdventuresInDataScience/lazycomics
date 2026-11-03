@@ -285,6 +285,25 @@ def test_tail_too_small_on_the_page_flagged(env):
     assert _messages(env, P, "tail_size") == []
 
 
+@_with_env
+def test_panel_lettered_upscaled_is_checked_in_panel_px(env):
+    # Lettered on its 4x upscaled copy: the layout record stays in generated-
+    # panel px (scale 4), the slot record is in lettered px. The same crop as
+    # test_box_cut_off_by_slot_flagged, so the same verdicts.
+    env.panel(P, 784, 576, aspect=1.36, visible=[768, 0, 2368, 2304], scale=0.25, layout={
+        "scale": 4,
+        "bubbles": [_bubble(0, [20, 20, 200, 80], tail=False, type_="shout"),
+                    _bubble(1, [250, 200, 500, 260], type_="shout")],
+        "captions": [[600, 20, 760, 60]],
+    })
+    assert _messages(env, P, "slot") == [
+        "line 1 is cut off by its page slot (slot shows x 192-592, y 0-576)",
+        "caption 1 is cut off by its page slot (slot shows x 192-592, y 0-576)",
+    ]
+    # 0.25 page px per lettered px is 1.0 per panel px: a 20px tail reads.
+    assert _messages(env, P, "tail_size") == []
+
+
 def test_tail_dims_for_triangles_and_dot_trails():
     w, l = review._tail_dims({"points": [[0, 0], [20, 0], [10, 30]]})
     assert (w, l) == (20, 30)

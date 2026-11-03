@@ -146,7 +146,8 @@ def _holdout_copy(src: Path, dst: Path) -> lc.Project:
     """A fresh copy of an archived project, its absolute paths rewritten."""
     if dst.exists():
         shutil.rmtree(dst)
-    shutil.copytree(src, dst, ignore=shutil.ignore_patterns("pages_upscaled", "output"))
+    shutil.copytree(src, dst, ignore=shutil.ignore_patterns(
+        "pages_upscaled", "panels_upscaled", "pages_print", "output"))
     old, new = (json.dumps(str(p.resolve()))[1:-1] for p in (src, dst))
     for path in dst.rglob("*.json"):
         text = path.read_text(encoding="utf-8")

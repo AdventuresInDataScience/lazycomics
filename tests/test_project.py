@@ -47,7 +47,8 @@ def test_create_project_makes_directory_tree(env):
 
     assert project.base_dir.is_dir()
     for sub in ("assets", "enriched", "prompts", "refs_prepared",
-                "panels", "panels_text", "pages", "pages_upscaled", "output"):
+                "panels", "panels_upscaled", "panels_text", "pages", "pages_print",
+                "output"):
         assert (project.base_dir / sub).is_dir(), f"missing subdir: {sub}"
 
 

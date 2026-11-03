@@ -129,6 +129,13 @@ def check_panel(project: Project, panel_id: str) -> list[Issue]:
         return issues
 
     slot = (_read_json(project.base_dir / "panel_slots.json") or {}).get(panel_id)
+    k = layout.get("scale", 1)
+    if slot is not None and k != 1:
+        # The slot record is in lettered-panel px; the layout, in generated-
+        # panel px. A panel lettered on its upscaled copy is k times larger.
+        slot = {**slot, "visible": [v / k for v in slot["visible"]]}
+        if "scale" in slot:
+            slot["scale"] *= k
     if layout.get("overflow"):
         issues.append(Issue("overflow", f"too much dialogue for the panel: stacked, the bubbles "
                                         f"need {layout['overflow']:.0%} of its height"))
@@ -161,7 +168,8 @@ def _slot_issues(entry: dict[str, Any] | None, layout: dict[str, Any]) -> list[I
         # 1px slack for the window's rounding.
         if x0 < vx0 - 1 or y0 < vy0 - 1 or x1 > vx1 + 1 or y1 > vy1 + 1:
             issues.append(Issue(
-                "slot", f"{name} is cut off by its page slot (slot shows x {vx0}-{vx1}, y {vy0}-{vy1})",
+                "slot", f"{name} is cut off by its page slot "
+                        f"(slot shows x {vx0:g}-{vx1:g}, y {vy0:g}-{vy1:g})",
             ))
     return issues
 

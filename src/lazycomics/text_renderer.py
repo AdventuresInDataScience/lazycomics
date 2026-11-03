@@ -46,7 +46,9 @@ Alongside each output PNG it writes ``panels_text/<panel_id>.layout.json``:
 what it placed and why (detected faces, the character→face matches, each
 bubble's rect / tail anchor in CBML line order, caption and SFX boxes).
 ``lazycomics.review`` reads it to check reading order and overlaps without
-re-deriving the layout.
+re-deriving the layout. Its coordinates are in generated-panel px; when the
+panel was lettered on its upscaled copy, ``scale`` is how much larger the
+output PNG is.
 
 It also writes the faces and matches it used back into the panel's enriched
 JSON as ``detected_faces`` / ``actual_character_regions`` (with
@@ -69,7 +71,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from lazycomics import face_detector
+from lazycomics import face_detector, upscaler
 from lazycomics.config import cfg_get, load_config
 from lazycomics.geometry import shape_hits_rect
 from lazycomics.models import Project
@@ -161,6 +163,11 @@ def render_text(
     JSON; writes ``<project>/panels_text/<panel_id>.png``. Returns
     ``{panel_id: output_path}``.
 
+    If ``upscale_panels`` has made ``panels_upscaled/<panel_id>.png``, that
+    is what gets lettered: the layout is still decided on the generated
+    panel (faces, sizes, every record in panel px), then drawn at the
+    upscaled size, so the output is that size.
+
     Font sizes and tail length are resolved arg → ``text.<key>`` config →
     hardcoded default (see the module-level ``_DEFAULT_*`` constants).
     Pass ``config`` to avoid a redundant ``load_config()`` when the caller
@@ -199,9 +206,12 @@ def render_text(
         panel_hash = hashlib.sha1(panel_path.read_bytes()).hexdigest()
         known = panel_data if panel_data.get("detected_faces_for") == panel_hash else {}
         img = Image.open(panel_path).convert("RGBA")
+        canvas = _upscaled_canvas(project, panel_id, panel_hash, img.size)
         layout: dict[str, Any] = {"size": list(img.size)}
-        img = _render_one(img, panel_data, text_cfg, record=layout, known=known)
-        img.convert("RGB").save(out_path)
+        if canvas is not None:
+            layout["scale"] = canvas.width / img.width
+        img = _render_one(img, panel_data, text_cfg, record=layout, known=known, canvas=canvas)
+        (img if canvas is None else canvas).convert("RGB").save(out_path)
         out_path.with_suffix(".layout.json").write_text(
             json.dumps(layout, indent=2), encoding="utf-8",
         )
@@ -216,6 +226,34 @@ def render_text(
         results[panel_id] = out_path
 
     return results
+
+
+def _upscaled_canvas(project: Project, panel_id: str, panel_hash: str,
+                     size: tuple[int, int]) -> Image.Image | None:
+    """The upscaler's copy of the panel, to letter at full size; ``None`` if
+    there isn't one (the panel itself is lettered).
+
+    Raises if the copy was made from a different panel image (re-run
+    ``upscale_panels``) or isn't a uniform enlargement of it. A copy with no
+    recorded source (e.g. hand-edited) is used as is.
+    """
+    path = project.panels_upscaled_dir / f"{panel_id}.png"
+    if not path.is_file():
+        return None
+    canvas = Image.open(path)
+    made_from = canvas.info.get(upscaler.SOURCE_KEY)
+    if made_from is not None and made_from != panel_hash:
+        raise RuntimeError(
+            f"{path} was upscaled from a different {panel_id}.png: "
+            "re-run upscale_panels before render_text"
+        )
+    k = canvas.width / size[0]
+    if k < 1 or abs(canvas.height - size[1] * k) > k:
+        raise ValueError(
+            f"{path} is {canvas.width}x{canvas.height}, not an enlargement of "
+            f"the {size[0]}x{size[1]} panel"
+        )
+    return canvas.convert("RGBA")
 
 
 def _resolve_text_cfg(config: dict[str, Any]) -> dict[str, float]:
@@ -250,7 +288,11 @@ def _wrap_width(frac: float, panel_w: int, panel_h: int, margin: int) -> int:
 def _render_one(img: Image.Image, panel: dict[str, Any],
                 text_cfg: dict[str, float],
                 record: dict[str, Any] | None = None,
-                known: dict[str, Any] | None = None) -> Image.Image:
+                known: dict[str, Any] | None = None,
+                canvas: Image.Image | None = None) -> Image.Image:
+    # With a ``canvas`` (the upscaled panel), everything is still laid out
+    # and drawn on ``img`` exactly as without one, and also drawn, scaled, on
+    # the canvas (_TeeDraw).
     # Captions and SFX are placed first; their boxes are obstacles the
     # dialogue layout keeps clear of, so record them even if the caller
     # didn't ask for a record.
@@ -264,8 +306,9 @@ def _render_one(img: Image.Image, panel: dict[str, Any],
         faces = [tuple(f) for f in known["detected_faces"]]
     elif dialogue or sfx:
         faces = _detect_all_faces(img)
-    img = _render_captions(img, panel.get("caption_boxes") or [], text_cfg, rec)
-    img = _render_sfx(img, sfx, text_cfg, rec, faces=faces, obstacles=rec.get("captions", []))
+    img = _render_captions(img, panel.get("caption_boxes") or [], text_cfg, rec, canvas=canvas)
+    img = _render_sfx(img, sfx, text_cfg, rec, faces=faces, obstacles=rec.get("captions", []),
+                      canvas=canvas)
     img = _render_dialogue(
         img,
         dialogue,
@@ -275,6 +318,7 @@ def _render_one(img: Image.Image, panel: dict[str, Any],
         faces=faces,
         obstacles=rec.get("captions", []) + rec.get("sfx", []),
         known=known,
+        canvas=canvas,
     )
     if sfx and "faces" not in rec:  # SFX-only panel: still record what it avoided
         rec["faces"] = [list(f) for f in faces]
@@ -289,10 +333,11 @@ def _record(record: dict[str, Any] | None, key: str, item: Any) -> None:
 
 def _render_captions(img: Image.Image, captions: list[dict[str, Any]],
                      text_cfg: dict[str, float],
-                     record: dict[str, Any] | None = None) -> Image.Image:
+                     record: dict[str, Any] | None = None,
+                     *, canvas: Image.Image | None = None) -> Image.Image:
     if not captions:
         return img
-    draw = ImageDraw.Draw(img)
+    draw = _draw_for(img, canvas)
     W, H = img.size
     font = _load_font(size=_font_px(text_cfg["caption_ratio"], W, H, text_cfg))
     line_h = _line_height(font)
@@ -368,7 +413,8 @@ def _render_sfx(img: Image.Image, sfx_lines: list[dict[str, Any]],
                 text_cfg: dict[str, float],
                 record: dict[str, Any] | None = None,
                 faces: list[tuple[int, int, int, int]] | None = None,
-                obstacles: list[list[int]] | None = None) -> Image.Image:
+                obstacles: list[list[int]] | None = None,
+                *, canvas: Image.Image | None = None) -> Image.Image:
     """Draw each SFX at its ``pos:`` anchor, or as near it as keeps it off
     every face and caption.
 
@@ -379,7 +425,7 @@ def _render_sfx(img: Image.Image, sfx_lines: list[dict[str, Any]],
     """
     if not sfx_lines:
         return img
-    draw = ImageDraw.Draw(img)
+    draw = _draw_for(img, canvas)
     W, H = img.size
     font = _load_font(size=_font_px(text_cfg["sfx_ratio"], W, H, text_cfg))
     margin = 20
@@ -405,14 +451,7 @@ def _render_sfx(img: Image.Image, sfx_lines: list[dict[str, Any]],
 
         # Outline for legibility against any background.
         outline = "#ffffff" if _is_dark(color) else "#000000"
-        for dx in (-2, -1, 0, 1, 2):
-            for dy in (-2, -1, 0, 1, 2):
-                if dx == 0 and dy == 0:
-                    continue
-                if dx * dx + dy * dy <= 4:
-                    draw.text((x + dx, y + dy), text, fill=outline, font=font)
-
-        draw.text((x, y), text, fill=color, font=font)
+        draw.text((x, y), text, fill=color, font=font, stroke_width=2, stroke_fill=outline)
     return img
 
 
@@ -471,6 +510,7 @@ def _render_dialogue(
     faces: list[tuple[int, int, int, int]] | None = None,
     obstacles: list[list[int]] | None = None,
     known: dict[str, Any] | None = None,
+    canvas: Image.Image | None = None,
 ) -> Image.Image:
     """Lay out and draw the dialogue bubbles, in CBML reading order.
 
@@ -496,7 +536,7 @@ def _render_dialogue(
     if not dialogue:
         return img
 
-    draw = ImageDraw.Draw(img)
+    draw = _draw_for(img, canvas)
     W, H = img.size
     font_px = _font_px(text_cfg["dialogue_ratio"], W, H, text_cfg)
     font = _load_font(size=font_px)
@@ -1407,6 +1447,89 @@ def _dashed_line(draw: ImageDraw.ImageDraw, a, b, width: int, dash: int = 10, ga
                    (a[0] + (b[0] - a[0]) * e / length, a[1] + (b[1] - a[1]) * e / length)],
                   fill="#000000", width=width)
         s = e + gap
+
+
+# ---------------------------------------------------------------------------
+# Drawing at the upscaled size
+# ---------------------------------------------------------------------------
+
+
+def _draw_for(img: Image.Image, canvas: Image.Image | None):
+    """The draw target for ``img``: itself, or teed onto the upscaled ``canvas``."""
+    return ImageDraw.Draw(img) if canvas is None else _TeeDraw(img, canvas)
+
+
+class _TeeDraw:
+    """An ``ImageDraw`` on the panel that replays every shape, scaled, on
+    its upscaled copy.
+
+    The layout never sees the canvas: text is measured on the panel, and the
+    panel is drawn on exactly as it would be alone (so later steps read the
+    same busyness). Each shape is drawn again on the canvas, ``k`` times the
+    panel's size, with its coordinates, line widths, radii and font size
+    multiplied by ``k``: the same lettering, rasterised at full size.
+    """
+
+    def __init__(self, img: Image.Image, canvas: Image.Image):
+        self._small = ImageDraw.Draw(img)
+        self._big = ImageDraw.Draw(canvas)
+        self._k = canvas.width / img.width
+        self._fonts: dict[int, Any] = {}
+
+    def textbbox(self, xy, text, **kw):
+        return self._small.textbbox(xy, text, **kw)
+
+    def text(self, xy, text, **kw):
+        self._small.text(xy, text, **kw)
+        self._big.text(self._xy(xy), text, **self._scaled(kw))
+
+    def line(self, xy, **kw):
+        self._small.line(xy, **kw)
+        self._big.line(self._xy(xy), **self._scaled(kw, width=1))
+
+    def rectangle(self, xy, **kw):
+        self._small.rectangle(xy, **kw)
+        self._big.rectangle(self._xy(xy), **self._scaled(kw, width=1))
+
+    def rounded_rectangle(self, xy, **kw):
+        self._small.rounded_rectangle(xy, **kw)
+        self._big.rounded_rectangle(self._xy(xy), **self._scaled(kw, width=1))
+
+    def ellipse(self, xy, **kw):
+        self._small.ellipse(xy, **kw)
+        self._big.ellipse(self._xy(xy), **self._scaled(kw, width=1))
+
+    def polygon(self, xy, **kw):
+        self._small.polygon(xy, **kw)
+        self._big.polygon(self._xy(xy), **self._scaled(kw, width=1))
+
+    def _xy(self, xy):
+        """Scale ``(x, y)``, ``[(x, y), ...]`` or a flat ``[x0, y0, x1, y1]``."""
+        k = self._k
+        if isinstance(xy[0], (tuple, list)):
+            return [(x * k, y * k) for x, y in xy]
+        return tuple(v * k for v in xy)
+
+    def _scaled(self, kw: dict[str, Any], width: int | None = None) -> dict[str, Any]:
+        """Draw kwargs at canvas scale; ``width`` is the call's default line width."""
+        k = self._k
+        out = dict(kw)
+        if width is not None:
+            out["width"] = max(1, round(kw.get("width", width) * k))
+        for key in ("radius", "stroke_width"):
+            if key in kw:
+                out[key] = round(kw[key] * k)
+        if "font" in kw:
+            out["font"] = self._font(kw["font"])
+        return out
+
+    def _font(self, font):
+        # Keyed by id; the entry holds the font too, so the id isn't reused.
+        if id(font) not in self._fonts:
+            # A bitmap fallback font can't be resized; it stays small.
+            variant = getattr(font, "font_variant", None)
+            self._fonts[id(font)] = (font, variant(size=font.size * self._k) if variant else font)
+        return self._fonts[id(font)][1]
 
 
 # ---------------------------------------------------------------------------

@@ -44,7 +44,8 @@ def create_project(
 
     project_dir.mkdir(parents=True)
     for sub in ("assets", "enriched", "prompts", "refs_prepared",
-                "panels", "panels_text", "pages", "pages_upscaled", "output"):
+                "panels", "panels_upscaled", "panels_text", "pages", "pages_print",
+                "output"):
         (project_dir / sub).mkdir()
 
     shutil.copy(cbml_src, project_dir / "source.cbml")
@@ -84,9 +85,10 @@ def _build_project(name: str, project_dir: Path) -> Project:
         prompts_dir=project_dir / "prompts",
         refs_prepared_dir=project_dir / "refs_prepared",
         panels_dir=project_dir / "panels",
+        panels_upscaled_dir=project_dir / "panels_upscaled",
         panels_text_dir=project_dir / "panels_text",
         pages_dir=project_dir / "pages",
-        pages_upscaled_dir=project_dir / "pages_upscaled",
+        pages_print_dir=project_dir / "pages_print",
         output_dir=project_dir / "output",
         manifest_path=project_dir / _MANIFEST_NAME,
     )

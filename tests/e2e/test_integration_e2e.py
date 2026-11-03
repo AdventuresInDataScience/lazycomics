@@ -1,7 +1,7 @@
 """End-to-end integration test — REAL pipeline, no mocks.
 
 Runs the full lazycomics pipeline against the real external tools
-(Wan2GP, Real-ESRGAN, Ollama). The only difference from a production run
+(Wan2GP, the ONNX upscaler, Ollama). The only difference from a production run
 is that each stage asserts correctness before proceeding.
 
 Prerequisites:
@@ -9,7 +9,8 @@ Prerequisites:
     - lazycomics_config.yaml in repo root with wan2gp paths
     - Wan2GP model weights downloaded (via Pinokio)
     - Pinokio NOT actively running Wan2GP (avoids GPU contention)
-    - (Optional) realesrgan-ncnn-vulkan on PATH — upscale stage skipped if absent
+    - The upscaler: lazycomics[upscale] installed and ``upscaler.model_path``
+      pointing at its ONNX model (README, "Upscaling"); fails if absent
     - (Optional) Ollama running at localhost:11434 — LLM stage skipped if absent
 
 Run:
@@ -48,10 +49,6 @@ OUTPUT_ROOT = Path(__file__).parent / "outputs"  # shared with golden_run.py and
 # ---------------------------------------------------------------------------
 
 
-def _tool_available(name: str) -> bool:
-    return shutil.which(name) is not None
-
-
 def _llm_model_available(config) -> bool:
     """True only if the configured LLM endpoint is up *and* the configured
     model is actually pulled.
@@ -88,8 +85,8 @@ def test_full_pipeline_e2e():
 
     Stages:
         enrich → build_prompts → prepare_references → (LLM refine, optional)
-        → generate_panels → skip-if-exists check → render_text → assemble_pages
-        → (upscale, optional) → export_cbz
+        → generate_panels → skip-if-exists check → upscale_panels → render_text
+        → assemble_pages (screen + print pages) → export_cbz
     """
     # --- Real config (fails fast if lazycomics_config.yaml is missing) ---
     config = load_config()
@@ -204,9 +201,22 @@ def test_full_pipeline_e2e():
     assert mtimes_before == mtimes_after, \
         "skip-if-exists must not re-write existing panel files"
 
+    # === Upscale ============================================================
+    # Before lettering, so the lettering is drawn at the upscaled size.
+    upscaled = lc.upscale_panels(project, config=config)
+    assert len(upscaled) == len(panels), f"expected {len(panels)} upscaled panels, got {len(upscaled)}"
+    for pid, path in upscaled.items():
+        raw = Image.open(project.panels_dir / f"{pid}.png").size
+        big = Image.open(path).size
+        assert big[0] >= 2 * raw[0] and big[0] * raw[1] == big[1] * raw[0], \
+            f"{pid}: {big} isn't an enlargement of {raw}"
+
     # === Render text ========================================================
     rendered = lc.render_text(project)
     assert len(rendered) == len(panels)
+    for pid, path in rendered.items():
+        assert Image.open(path).size == Image.open(upscaled[pid]).size, \
+            f"{pid}: lettered at {Image.open(path).size}, not the upscaled size"
 
     # === Assemble pages =====================================================
     # At the configured (production) page size, so the pages reviewed are
@@ -221,6 +231,9 @@ def test_full_pipeline_e2e():
         img = Image.open(ppath)
         assert img.size[0] > 100 and img.size[1] > 100, \
             f"page {pnum} too small: {img.size}"
+        printed = project.pages_print_dir / f"page_{pnum:03d}.png"
+        assert printed.is_file(), f"expected a print page at {printed}"
+        assert Image.open(printed).height == config["assembly"]["print_page_height_px"]
 
     # Lettering survives assembly: no bubble/caption/SFX falls outside the
     # part of its panel the page slot shows, and every drawn tail aims at a
@@ -230,19 +243,6 @@ def test_full_pipeline_e2e():
         hard = [i for i in review.check_panel(project, pid)
                 if i.kind in ("slot", "tail_anchor", "record")]
         assert not hard, f"{pid}: {[str(i) for i in hard]}"
-
-    # === Upscale (optional) =================================================
-    upscaler_exe = config.get("upscaler", {}).get("executable", "realesrgan-ncnn-vulkan")
-    if _tool_available(upscaler_exe):
-        upscaled = lc.upscale_pages(project, force=True, config=config)
-        assert len(upscaled) == len(pages), f"expected {len(pages)} upscaled pages, got {len(upscaled)}"
-        for path in upscaled:
-            assert path.is_file()
-            img = Image.open(path)
-            assert img.size[0] > 800 or img.size[1] > 800, \
-                f"{path.name} doesn't look upscaled: {img.size}"
-    else:
-        print(f"\n  [skip] Upscale — '{upscaler_exe}' not on PATH")
 
     # === Export CBZ =========================================================
     cbz = lc.export_cbz(project)

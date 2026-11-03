@@ -25,9 +25,11 @@ def export_cbz(
     output_filename: str | None = None,
     *,
     force: bool = False,
-    prefer_upscaled: bool = True,
 ) -> Path:
     """Bundle the project's page PNGs into a ``.cbz`` archive.
+
+    The archive holds the screen pages in ``pages/``; the print-size copies
+    in ``pages_print/`` stay out of it.
 
     Parameters
     ----------
@@ -41,11 +43,6 @@ def export_cbz(
         If ``True``, overwrite an existing archive. If ``False``
         (default) and the archive already exists, this returns the
         existing path without rewriting.
-    prefer_upscaled
-        If ``True`` (default) and ``<project>/pages_upscaled/`` contains
-        ``page_*.png`` files, those are bundled instead of ``pages/`` —
-        so a run that includes the upscale stage ships the upscaled
-        pages. Set ``False`` to always bundle the un-upscaled ``pages/``.
 
     Returns
     -------
@@ -66,12 +63,10 @@ def export_cbz(
     if output_path.is_file() and not force:
         return output_path
 
-    pages = _select_pages(project, prefer_upscaled)
+    pages = sorted(project.pages_dir.glob("page_*.png"))
     if not pages:
         raise FileNotFoundError(
-            "no pages to export — expected page_*.png files in "
-            f"{project.pages_dir}"
-            + (f" or {project.pages_upscaled_dir}" if prefer_upscaled else "")
+            f"no pages to export — expected page_*.png files in {project.pages_dir}"
         )
 
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_STORED) as zf:
@@ -80,11 +75,3 @@ def export_cbz(
 
     return output_path
 
-
-def _select_pages(project: Project, prefer_upscaled: bool) -> list[Path]:
-    """Return the page PNGs to bundle: upscaled if present and preferred."""
-    if prefer_upscaled:
-        upscaled = sorted(project.pages_upscaled_dir.glob("page_*.png"))
-        if upscaled:
-            return upscaled
-    return sorted(project.pages_dir.glob("page_*.png"))

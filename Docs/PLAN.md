@@ -6,7 +6,8 @@ W7 and W8's as-built records (lettering, generation fixes) are in
 in [`archive/2026-11-02_PLAN_W5-W6.md`](archive/2026-11-02_PLAN_W5-W6.md),
 and W0–W4 in [`archive/2026-11-01_PLAN_W0-W4.md`](archive/2026-11-01_PLAN_W0-W4.md).
 On 2026-11-03 the leftover generation faults became W11 (Refinement) and
-the LoRA work moved from W11 to W12; the archives still call it W11._
+the LoRA work moved from W11 to W12; the archives still call it W11. W9
+closed the same day; its record is in Reference, "Upscaler (from W9)"._
 
 **How this doc works.**
 - Status lives only in the two tables below: workstreams, then open
@@ -20,12 +21,11 @@ the LoRA work moved from W11 to W12; the archives still call it W11._
   say-so. W5 was reported done on 2026-11-01 with nothing built.
 
 **Priorities, in order:**
-1. Get the last pipeline stage running: upscaling (W9).
-2. Sign off a full e2e run, every stage, reviewed by you (milestone).
-3. Tidy-up (W10).
-4. Refinement (W11): the generation-quality faults moved out of W8 so it
+1. Sign off a full e2e run, every stage, reviewed by you (milestone).
+2. Tidy-up (W10).
+3. Refinement (W11): the generation-quality faults moved out of W8 so it
    could close.
-5. LoRA work (W12), last: only after the e2e is signed off and W11 is
+4. LoRA work (W12), last: only after the e2e is signed off and W11 is
    done, on its own branch.
    The pipeline aims for consistency without LoRAs, to avoid the training
    cost.
@@ -37,35 +37,42 @@ the LoRA work moved from W11 to W12; the archives still call it W11._
 | W6 LoRA training pipeline | **Done** 2026-11-02: built and unit-tested; Wan2GP loads AI Toolkit's LoRA format (checked on real pixels). No LoRA trained: that's W12. |
 | W7 Lettering | **Done** 2026-11-03 on your read of the re-lettered e2e pages: no overlaps, faces uncovered, tails on every matched speaker, the lettering bench. Archived. |
 | W8 Generation fixes | **Done** 2026-11-03 on your read. Kept: dialogue and SFX as refiner context, rule checks on every refined prompt, the group cue where two or more speak, signage reworded in descriptions, two `story.cbml` edits, the refiner bench and a held-out script. Rejected: NAG, 8 steps. Leftovers moved to W11. Archived. |
-| **W9 Upscaling** | **Next.** The pipeline's last stage has never run (problem 19). Pick an upscaler and where it sits in the pipeline, then run it. |
-| e2e sign-off (milestone) | Not started. A full e2e run, every stage, meeting W7–W9's done-whens and your review. The gate for W11 and W12. |
-| W10 Tidy-up | Not started. Unused model fields, refinement and golden-run speed. |
+| W9 Upscaling | **Done** 2026-11-03: panels are upscaled 4x before lettering (`realesrgan-x4plus-anime`, ONNX on DirectML, your pick of four), lettered at that size with the layout unchanged, and assembled into 3000px pages for the `.cbz` plus 6000px print pages. Ran in the full e2e (2026-11-03). In Reference, "Upscaler (from W9)". |
+| **e2e sign-off (milestone)** | **Next.** A full e2e run, every stage, meeting W7–W9's done-whens and your review. W9's run (2026-11-03) ran every stage and awaits your read. The gate for W11 and W12. |
+| W10 Tidy-up | Not started. Unused model fields; refinement, golden-run and lettering-bench speed. |
 | W11 Refinement | Not started; after the sign-off and W10. The generation-quality faults moved out of W8: painted bubbles (problem 8), 3 of 4 drawn on the 0.22 strip and `page_2_panel_1`'s residue (problem 16). |
 | W12 LoRA path | **Parked** until the e2e sign-off and W11: the last workstream, on its own branch. Train and judge one character's LoRA, then fix the inpaint path (problem 6). |
 
 ## Where things stand (2026-11-03)
 
-- **Unit tests:** 466 pass (`pytest tests --ignore=tests/e2e`, ~1 min).
-- **Full e2e (2026-11-01):** the pipeline runs end to end on real Wan2GP +
-  Ollama, but isn't signed off.
-  - `story.cbml`, 33 panels → pages → `.cbz`, in 41.5 min on AC power: 13 min
-    of LLM refinement, 27 min of generation. Kept as it was generated, the
-    "before" every problem below cites, in
-    `tests/e2e/archived_test_outputs/2026-11-01_e2e/`.
-  - Characters are on-model in all 52 appearances where they're drawn.
-  - Your review found the lettering the weakest part (W7), plus faults in
-    the art itself (W8). Upscaling was skipped (problem 19, W9).
-  - **Re-lettered by W7 (2026-11-02)** in `tests/e2e/outputs/e2e/`, pages
-    at 2000×3000: 30/33 panels clean. The only issues left are four
-    speakers with no tail because their face wasn't matched (fail closed).
+- **Unit tests:** 477 pass (`pytest tests --ignore=tests/e2e`, ~20s).
+- **Full e2e (2026-11-03, W9):** every stage ran on real Wan2GP + Ollama,
+  upscaling included, and W8's code and `story.cbml` edits for the first
+  time. Not signed off: it's in `tests/e2e/outputs/e2e/` for your review.
+  - `story.cbml`, 33 panels → 10 pages (2000×3000, plus 4000×6000 print
+    copies) → a 50 MB `.cbz`, in 41:45 on AC: 24.7 min of generation, 97s of
+    upscaling, ~15 min for the rest, mostly LLM refinement.
+  - Checks: 31/33 panels clean. `page_1_panel_1`: line 2's tail crosses
+    line 1 (the new art's layout, the same at 1x). `page_10_panel_1`:
+    Gerald's line has no tail, his face unmatched (fail closed).
+  - Consistency not yet scored on this run (`sheet_characters.png`).
+- **Earlier e2e runs**, in `tests/e2e/archived_test_outputs/`:
+  - `2026-11-01_e2e/`: kept as it was generated, the "before" every problem
+    below cites. 41.5 min on AC: 13 min of LLM refinement, 27 min of
+    generation. Characters on-model in all 52 appearances where they're
+    drawn. Your review found the lettering the weakest part (W7), plus
+    faults in the art itself (W8).
+  - `2026-11-02_e2e_w7_relettered/`: the same panels re-lettered by W7,
+    30/33 clean; four speakers with no tail because their face wasn't
+    matched (fail closed).
 - **Golden reference** for A/B runs: the golden run `w8_frozen` (12/12 clean
   on the checks), since W8 changed five frozen prompts. Its frozen prompts
   are in `tests/e2e/fixtures/golden_prompts/`. The previous reference,
   `w4_prompts`, is what W8's runs were judged against.
-- **Not yet run end to end:** W8's code and the two `story.cbml` edits
-  (`page_2_panel_1`'s background characters, `page_5_panel_1`'s neon). The
-  story panels W8 regenerated are in `tests/e2e/outputs/golden/`, each with
-  a `compare.png` (e2e | new raw | new lettered):
+- **W8's regenerated story panels**, from before the 2026-11-03 e2e ran its
+  code and the two `story.cbml` edits (`page_2_panel_1`'s background
+  characters, `page_5_panel_1`'s neon), are in `tests/e2e/outputs/golden/`,
+  each with a `compare.png` (e2e | new raw | new lettered):
   - `w8_story`: the 7 bar panels, `page_2_panel_1` and `page_7_panel_1`;
   - `w8_nocue`: the two panels the cue rule changed;
   - `w8_script`: the two panels the script edits changed.
@@ -84,7 +91,6 @@ Numbers carry over from the archived plans; code and tools cite them.
 | 4 | Bubble tail points at the wrong character | Residual after W7 (2 of 30 labelled speakers): e2e `page_10_panel_1` and golden `page_4_panel_1`, the 4-character 0.22 strip. Gerald and Yuki are seen from behind, and David is drawn where the script predicts Ranjeet, so David's tail lands on Ranjeet. | Matching is by predicted position only since W7.2 dropped SFace. Position can't tell a mirrored cast when some of it isn't visible. Fixing it needs an identity signal that works on this art (none known; the colour spike in W7 only exploited this cast's hair and skin). W8's group cue asks for the predicted order: regenerated, story `page_10_panel_1` draws David on the right, where the lettering expects him. Re-check at the sign-off. | Deferred (identity); W8 may help |
 | 6 | Inpaint settings never reach Wan2GP | Not exercised since May: `auto` sends LoRA-free panels through a single pass. | Inpaint tasks don't send `settings_version`, so wgp forces `denoising_strength = 1.0`. `masking_strength` 0.3 locks the area outside the mask for only ~2 of 4 steps, and flux2 never pastes the original pixels back. Net effect: the whole panel is regenerated. | W12 |
 | 14 | Face detector misses stylised faces and accepts junk | An earlier golden `page_6_panel_1`: Gerald's grinning face missed, a 0.53-score "face" on the floor accepted. e2e `page_5_panel_1` (three at a bar, no dialogue): no faces found. | Hybrid YuNet + MediaPipe at threshold 0.5. Tails, attribution, face avoidance and the character-sheet crops all inherit it. W7 traced no lettering fault to it. | Deferred |
-| 19 | The upscale stage has never run | Both e2e runs skipped it. | `realesrgan-ncnn-vulkan` isn't installed or on PATH. | W9 |
 
 **Moved to W11, Refinement** (2026-11-03, your call): 8 painted
 bubbles · 16 characters not drawn on the 0.22 strip, `page_2_panel_1`'s
@@ -95,7 +101,7 @@ panel edges · 3 bubble reading order · 5 character drift · 7 gibberish
 signage (W8) · 9 panels were JPEGs named `.png` · 10 fragile output pairing ·
 11 slow generation (power state, not code) · 12 tiny text in narrow panels ·
 13 colliding text lines · 15 thought dots tiny and bunched (W7) · 17
-captions overlapping (W7) · 18 bubbles covering faces (W7) · 21 tails
+captions overlapping (W7) · 18 bubbles covering faces (W7) · 19 the upscale stage never ran (W9) · 21 tails
 missing or too small (W7) · 23 unclear conversation order, tails crossing
 bubbles (W7) · 24 SFX on faces (W7) · 25 actions implied only by SFX or
 dialogue (W8) · 26 the checks missing lettering faults (W7) · 27 e2e pages
@@ -122,49 +128,6 @@ reviewed at 533×800 (W7).
 
 ## Workstreams (open, in order)
 
-### W9 — Upscaling
-
-The pipeline's last stage, `upscale_pages`, has never run (problem 19):
-`realesrgan-ncnn-vulkan` was never installed. Before installing it, settle
-which upscaler to use and where it goes. What's known (checked 2026-11-02):
-- **The current choice is already light.** `realesrgan-ncnn-vulkan` is a
-  standalone C++ binary that runs on the GPU through Vulkan: no Python,
-  torch or CUDA, just a download (`upscaler.py`'s docstring). It hasn't been
-  updated since 2022, and it isn't pip-installable.
-- **Wan2GP's env has no ML upscaler for Klein images,** so reusing the
-  Pinokio env doesn't help here. Its image "spatial upsampling" is Lanczos
-  ×1.5/×2. Its VAE ×2 upscaler only serves models that declare
-  `vae_upsampler` (Qwen, Wan), and FlashVSR is video-only (`wgp.py:818-832`,
-  `postprocessing/flashvsr/wgp_bridge.py`).
-- **Where it sits matters.** Today it upscales assembled pages, lettering
-  included. Pages are already 3000px tall (`assembly.page_height_px`), so
-  ×4 gives ~8000×12000px. Upscaling each panel's art *before* `render_text`
-  would keep the lettering crisp at full size, at the cost of changing what
-  `render_text` and the assembler are given.
-
-1. **Decide the target size** (your call): screen reading (a `.cbz` is
-   usually ~2000–3000px tall, which assembly already produces), print at
-   300 DPI, or both. If it's screen only, Lanczos at assembly may be enough
-   and an ML upscaler becomes optional.
-2. **Compare the options** on 3–4 e2e pages or panels: line art, flat
-   colour and text quality, time per page, install weight.
-   - `realesrgan-ncnn-vulkan` with `realesrgan-x4plus-anime` (the current
-     choice; a download).
-   - An ONNX model run with `onnxruntime` in lazycomics' own env: e.g.
-     Real-ESRGAN anime, or another anime/comic-tuned ×2/×4 model, exported
-     to ONNX. Pip-only, no torch. On CPU it's likely minutes per page;
-     `onnxruntime-directml` uses the GPU on Windows.
-   - Lanczos only, no model, as the baseline.
-3. **Decide the position:** pages after assembly (today), or panels before
-   lettering.
-4. **Install or build the winner,** keeping `upscale_pages`' contract
-   (`pages/` → `pages_upscaled/`, or the panel-level equivalent), its config
-   section and the parity test in step.
-
-**Done when:** the e2e run's upscale stage runs with the chosen option, and
-the choice, its install steps and its time per page are documented here and
-in the README.
-
 ### Milestone — e2e sign-off
 
 The gate before any LoRA work: the whole pipeline, every stage, working
@@ -174,6 +137,9 @@ properly.
    then `python tools/contact_sheet.py tests/e2e/outputs/e2e`, then your
    read of every page. W10.2 (LLM refinement speed) would cut the run's 13 min
    of refinement, if you want it first.
+   W9's run (2026-11-03) has done the first two: it and its sheets are in
+   `tests/e2e/outputs/e2e/`, so what's left is your read, unless something
+   changes first. Read `pages/` (the `.cbz`) and spot-check `pages_print/`.
 2. **Keep it.** Move the signed-off run into
    `tests/e2e/archived_test_outputs/<date>_e2e_signoff/`. W8 already
    replaced `w4_prompts` with `w8_frozen` as the A/B reference; replace it
@@ -203,6 +169,11 @@ properly.
    - then `--set refs.max_refs=N`.
 
    Then decide whether to keep the 8-minute target.
+4. **Lettering-bench speed.** Since W9 its tune set re-letters the e2e on
+   its 4x upscaled panels: 72s where it took ~20s, ~2.5 min for the whole
+   bench. The layout is the same at 1x (W9 checked all 33 panels), so the
+   bench could letter a 1x copy of the e2e instead, leaving the e2e's own
+   lettering as it is.
 
 ### W11 — Refinement. After the e2e sign-off and W10.
 
@@ -444,14 +415,60 @@ Traced in the Pinokio install (`C:\pinokio\api\ai-toolkit.git\app`, commit
 | resume | A job resumes from the newest LoRA in `<training_folder>/<name>/`, including a finished one, so retraining from scratch means deleting that folder. | `BaseSDTrainProcess.py:1858-1862` |
 | Hugging Face | `run.py` loads `<root>/.env` (e.g. `HF_TOKEN=…`) and turns on `hf_transfer` (installed in the env). | `run.py:5-6` |
 
+### Upscaler (from W9)
+
+**What runs.** `upscale_panels` enlarges each generated panel 4x
+(`panels/` → `panels_upscaled/`) with `realesrgan-x4plus-anime` (BSD-3),
+exported to ONNX by `tools/export_upscaler_onnx.py` and run in-process by
+`onnxruntime-directml` on the GPU, in 384px tiles with 24px of context.
+Install steps and times: README, "Upscaling". The model files are in
+`%LOCALAPPDATA%\lazycomics\upscalers\`, with the three it was compared
+against, so any of them can be tried through `upscaler.model_path`.
+
+**Why before lettering.** Panels are generated at 1024px. Filling a 3000px
+page's slots took 0.96–2.96x of Lanczos (median 1.46x), after lettering, so
+the lettering was stretched too. A 2000×3000 page is already ~300 DPI at US
+comic trim size; the old docstring's "4x pages are print-ready at 300 DPI"
+(8000×12000) was ~27×41in. So the 4x comes before lettering, and assembly
+writes two page sets (your call, 2026-11-03): `pages/` at 3000px for the
+`.cbz`, and `pages_print/` at 6000px, ~600 DPI. At print size the five
+panels stretched 2.93x on screen still get ~1.5x of Lanczos on top.
+
+**Lettering the upscaled copy** (`text_renderer._TeeDraw`). The layout is
+decided on the generated panel exactly as before: faces, busyness, text
+measured at panel size. Every draw call is then replayed on the upscaled
+copy with its coordinates, widths and font size scaled. Checked on real
+output: all 33 e2e layouts are identical with and without the upscaled
+copy, and the lettering bench's holdout and synthetic columns are unchanged.
+The SFX outline is now a font stroke rather than 12 offset copies, so it
+stays solid at 4x.
+
+**The comparison** (2026-11-03): 4 e2e panels on AC power, RTX 3080 Laptop,
+DirectML. The sheets are in `tests/e2e/outputs/upscale_compare/`, shown at
+the panels' print and screen sizes. Fidelity is the PSNR of each output
+shrunk back to the original: how much colour and content it keeps.
+
+| Model | Scale | s/panel | Fidelity (dB) | Read |
+|---|---|---|---|---|
+| **realesrgan-x4plus-anime** (chosen) | 4x | 2.0 | 32.6 | Your pick: good on every sheet, and fast. Flatter shading than the original, brighter whites, a few invented creases. BSD-3. |
+| 4x-IllustrationJaNai V1 ESRGAN | 4x | 5.7 | 37.4 | The crispest at print size; my recommendation. CC-BY-NC-SA. |
+| 4x-WTP-UDS-Esrgan | 4x | 5.8 | 32.3 | Shifts colour, invents lines. CC-BY. |
+| 2x-AnimeSharpV3 | 2x | 1.5 | 38.4 | The most faithful, but soft at print size, where Lanczos does up to 2.9x more. CC-BY-NC-SA. |
+| Lanczos (before W9) | – | – | – | Soft art; stair-stepped bubble edges and soft text once stretched. |
+
+**Cost in the e2e (2026-11-03):** 97s to upscale 33 panels (3.0s each with
+the PNG write, ~10s a page). From the dry run on the W7 e2e: lettering at 4x
+adds ~2.4s a page and the print pages another ~2.4s. About 6 MB on disk per
+upscaled panel and per lettered panel; the `.cbz` is 50 MB for 10 pages.
+
 ### Benches and held-out sets (from W7 and W8)
 
 You asked for these on 2026-11-02, so that fixes don't overfit the test
 story (e.g. by relying on this cast's distinct skin tones). Each judges a
 change beyond the panels it was tuned on. Their first results are in the
 W7–W8 archive.
-- **Lettering bench** (`tools/lettering_bench.py`, ~75s, no GPU). It
-  re-letters three sets and tallies the checks:
+- **Lettering bench** (`tools/lettering_bench.py`, ~2.5 min since W9,
+  no GPU; W10.4). It re-letters three sets and tallies the checks:
   - *tune*: the e2e and `w4_prompts`, re-lettered in place;
   - *holdout*: copies of the three older archived runs (57 panels,
     different art), checked only after a change, never while making it;
@@ -479,7 +496,8 @@ W7–W8 archive.
 
 | Changed | Run | Time |
 |---|---|---|
-| Text rendering / bubble layout | `python tools/lettering_bench.py --sets tune` while working, then the full `python tools/lettering_bench.py` (tune, holdout, synthetic; see "Benches and held-out sets") before keeping it. `python tools/contact_sheet.py <project> --reletter` re-letters any one project | ~20s / ~75s |
+| Text rendering / bubble layout | `python tools/lettering_bench.py --sets tune` while working, then the full `python tools/lettering_bench.py` (tune, holdout, synthetic; see "Benches and held-out sets") before keeping it. `python tools/contact_sheet.py <project> --reletter` re-letters any one project | ~70s / ~2.5 min (the e2e is lettered at 4x since W9: W10.4) |
+| The upscaler (model, tiling) or print pages | On a copy of the e2e project: `lc.upscale_panels(project, force=True)`, `lc.render_text(project, force=True)`, `lc.assemble_pages(project, force=True)`. The layout records must not change; compare crops of `pages/` and `pages_print/` with the e2e's | ~3 min |
 | Anything upstream of generation (bridge, refs, `refs`/`wan2gp` config) | `python tools/golden_run.py --force --out <name> --baseline w8_frozen [--set KEY=VALUE ...]` | ~10 min on AC (582s measured); ~23 min on battery |
 | Character descriptions, the prompt template or the refiner | `python tools/refiner_bench.py` (LLM only) while working. Then the golden run with `--refine`, and the held-out script: `python tools/golden_run.py --story tests/e2e/fixtures/holdout_story --refine --force --out <name>`. Freeze `tests/e2e/outputs/golden/<name>/project/prompts/*.txt` into `tests/e2e/fixtures/golden_prompts/` if it wins | ~9 min / + ~1 min / ~8 min |
 | A character LoRA (training settings, its training set) | `python tools/train_lora.py train <project> <ID> --force`, then a golden run with `--lora <ID>=<path>` (W12, step 4) | training: unmeasured; + ~10 min |
@@ -546,7 +564,8 @@ or to time panels individually:
    `page_001.png`).
 8. **Field renames happen once, at the enricher boundary** (parser `pos` →
    our `position`).
-9. **Lazy-import heavy/optional deps** (`cbml_parser`, `requests`). MediaPipe
+9. **Lazy-import heavy/optional deps** (`cbml_parser`, `requests`,
+   `onnxruntime`). MediaPipe
    is the exception (hard dep).
 10. **`_build_wangp_task` is the sole Wan2GP adapter.** Wan2GP field semantics
     live there and nowhere else.
@@ -558,11 +577,25 @@ or to time panels individually:
 ### Pipeline + contracts
 
 `enrich` → `build_prompts` → (`refine_prompts_with_llm`) →
-`prepare_references` → `generate_panels` (Wan2GP) → `render_text` →
-`assemble_pages` → `upscale_pages` → `export_cbz`.
+`prepare_references` → `generate_panels` (Wan2GP) → `upscale_panels` →
+`render_text` → `assemble_pages` → `export_cbz`.
 
 Directories: `enriched/` → `prompts/` → `refs_prepared/` → `panels/` →
-`panels_text/` → `pages/` → `pages_upscaled/` → `output/*.cbz`.
+`panels_upscaled/` → `panels_text/` → `pages/` (+ `pages_print/`) →
+`output/*.cbz`.
+
+- **`panels_upscaled/<id>.png`** (upscaler): the panel 4x, recording the
+  SHA-1 of the `panels/` image it was made from (PNG text
+  `lazycomics_source_sha1`). A regenerated panel is redone by the next
+  `upscale_panels`; `render_text` refuses a copy made from another image,
+  and letters the panel itself if there's no copy.
+- **Coordinates.** What the renderer records (`layout.json`,
+  `detected_faces`, matched regions) is in generated-panel px; `layout.json`'s
+  `scale` is how much larger the lettered PNG is. `panel_slots.json` is in
+  lettered-panel px, and `review.check_panel` converts where the two meet.
+- **`pages_print/`** (assembler): every page again at
+  `assembly.print_page_height_px`, gutters scaled. Not in the `.cbz`, and no
+  slot record.
 
 - **`bubble_layout`** (enricher): predicted per-character regions, equal
   horizontal slices in CBML order. The renderer uses it as a left-to-right

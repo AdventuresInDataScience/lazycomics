@@ -2,7 +2,8 @@
 
 Reads the CBML to recover comic aspect + page geometry, lays out the
 panels onto a per-page canvas with gutters, and writes one PNG per
-physical page to ``<project>/pages/``.
+physical page to ``<project>/pages/`` (what the ``.cbz`` ships), plus a
+print-size copy in ``<project>/pages_print/``.
 
 Spreads (``PAGE spread:N``) are composited onto one ``N × page_w`` wide
 canvas internally, then split at vertical midlines so the output is
@@ -13,6 +14,9 @@ Three-tier knob resolution (arg → ``assembly.<key>`` config → default):
 
 * ``page_height_px`` — height of one physical page in pixels.
   Width is derived from ``comic.aspect``. Default 3000.
+* ``print_page_height_px`` — height of the print copy of every page, written
+  to ``<project>/pages_print/`` (same layout, gutters scaled to match).
+  Default 6000: ~600 DPI at US comic trim size. ``0`` skips it.
 * ``gutter_px`` — gap between cells (and inside spans). Default 20.
 * ``bg_color`` — gutter / canvas background. Default ``#ffffff``.
 * ``stretch_tolerance`` — relative aspect drift allowed before
@@ -42,6 +46,7 @@ __all__ = ["assemble_pages"]
 
 
 _DEFAULT_PAGE_HEIGHT_PX = 3000
+_DEFAULT_PRINT_PAGE_HEIGHT_PX = 6000
 _DEFAULT_GUTTER_PX = 20
 _DEFAULT_BG_COLOR = "#ffffff"
 _DEFAULT_STRETCH_TOLERANCE = 0.0
@@ -58,16 +63,18 @@ def assemble_pages(
     project: Project,
     *,
     page_height_px: int | None = None,
+    print_page_height_px: int | None = None,
     gutter_px: int | None = None,
     bg_color: str | None = None,
     stretch_tolerance: float | None = None,
     fit_mode: str | None = None,
     force: bool = False,
 ) -> dict[int, Path]:
-    """Composite panels into per-page PNGs under ``<project>/pages/``.
+    """Composite panels into per-page PNGs under ``<project>/pages/``, and
+    the same pages at print size under ``<project>/pages_print/``.
 
-    Returns ``{physical_page_number: path}`` with 1-based page numbers
-    matching the filename ``page_<NNN>.png``.
+    Returns ``{physical_page_number: path}`` for ``pages/``, with 1-based
+    page numbers matching the filename ``page_<NNN>.png``.
 
     Parameters are resolved arg → ``assembly.<key>`` config → default.
     Existing page files are skipped unless ``force=True`` (the user may
@@ -75,6 +82,8 @@ def assemble_pages(
     """
     cfg = load_config()
     page_h = _resolve(page_height_px, cfg, "assembly.page_height_px", _DEFAULT_PAGE_HEIGHT_PX)
+    print_h = _resolve(print_page_height_px, cfg, "assembly.print_page_height_px",
+                       _DEFAULT_PRINT_PAGE_HEIGHT_PX)
     gutter = _resolve(gutter_px, cfg, "assembly.gutter_px", _DEFAULT_GUTTER_PX)
     bg = _resolve(bg_color, cfg, "assembly.bg_color", _DEFAULT_BG_COLOR)
     tol = _resolve(stretch_tolerance, cfg, "assembly.stretch_tolerance", _DEFAULT_STRETCH_TOLERANCE)
@@ -87,6 +96,7 @@ def assemble_pages(
     return _assemble_from_comic(
         project, comic,
         page_height_px=page_h,
+        print_page_height_px=print_h,
         gutter_px=gutter,
         bg_color=bg,
         stretch_tolerance=tol,
@@ -112,12 +122,16 @@ def _assemble_from_comic(
     comic: Any,
     *,
     page_height_px: int = _DEFAULT_PAGE_HEIGHT_PX,
+    print_page_height_px: int | None = None,
     gutter_px: int = _DEFAULT_GUTTER_PX,
     bg_color: str = _DEFAULT_BG_COLOR,
     stretch_tolerance: float = _DEFAULT_STRETCH_TOLERANCE,
     fit_mode: str = _DEFAULT_FIT_MODE,
     force: bool = False,
 ) -> dict[int, Path]:
+    """``assemble_pages`` after parsing. No print pages unless
+    ``print_page_height_px`` is given (``assemble_pages`` resolves its
+    default)."""
     if fit_mode not in _VALID_FIT_MODES:
         raise ValueError(
             f"fit_mode must be one of {_VALID_FIT_MODES}, got {fit_mode!r}"
@@ -127,45 +141,78 @@ def _assemble_from_comic(
     page_w = int(round(aspect_w * page_height_px / aspect_h))
 
     # Merge into the existing record so pages skipped below keep theirs.
-    # Kept out of pages/: the upscaler hands that whole directory to
-    # Real-ESRGAN, so it stays images-only.
+    # Kept out of pages/, which holds only the page images.
     slots_path = project.base_dir / "panel_slots.json"
     slots: dict[str, Any] = (
         json.loads(slots_path.read_text(encoding="utf-8")) if slots_path.is_file() else {}
     )
+    results = _write_pages(
+        project, comic, project.pages_dir, page_w, page_height_px, gutter_px,
+        bg_color, stretch_tolerance, fit_mode, force, slots=slots,
+    )
+    slots_path.write_text(json.dumps(slots, indent=2), encoding="utf-8")
 
+    if print_page_height_px:
+        # The same pages, larger: gutters scale with the page.
+        ratio = print_page_height_px / page_height_px
+        _write_pages(
+            project, comic, project.pages_print_dir,
+            int(round(aspect_w * print_page_height_px / aspect_h)), print_page_height_px,
+            int(round(gutter_px * ratio)), bg_color, stretch_tolerance, fit_mode, force,
+        )
+    return results
+
+
+def _write_pages(
+    project: Project,
+    comic: Any,
+    out_dir: Path,
+    page_w: int,
+    page_h: int,
+    gutter_px: int,
+    bg_color: str,
+    stretch_tolerance: float,
+    fit_mode: str,
+    force: bool,
+    slots: dict[str, Any] | None = None,
+) -> dict[int, Path]:
+    """Write every physical page into ``out_dir`` at ``page_w`` x ``page_h``.
+
+    Pages already there are skipped unless ``force``. Records where each
+    placed panel landed into ``slots``, if given.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
     results: dict[int, Path] = {}
     for page in comic.pages:
         span = page.span
         first_page_num = page.index + 1  # 1-based
-        first_path = project.pages_dir / _page_filename(first_page_num)
+        first_path = out_dir / _page_filename(first_page_num)
         if first_path.is_file() and not force:
             # Already rendered — collect any sibling pages for this spread.
             for i in range(span):
                 pn = first_page_num + i
-                p = project.pages_dir / _page_filename(pn)
+                p = out_dir / _page_filename(pn)
                 if p.is_file():
                     results[pn] = p
             continue
 
-        page_slots: dict[str, Any] = {}
+        page_slots: dict[str, Any] | None = {} if slots is not None else None
         canvas = _render_page_canvas(
-            page, page_w, page_height_px, gutter_px, bg_color,
+            page, page_w, page_h, gutter_px, bg_color,
             stretch_tolerance, fit_mode, project, record=page_slots,
         )
-        page_nums = list(range(first_page_num, first_page_num + span))
-        for entry in page_slots.values():
-            entry["pages"] = page_nums
-        slots.update(page_slots)
+        if slots is not None:
+            page_nums = list(range(first_page_num, first_page_num + span))
+            for entry in page_slots.values():
+                entry["pages"] = page_nums
+            slots.update(page_slots)
 
         # Split spread canvas into physical pages and write each.
         for i, physical in enumerate(_split_canvas(canvas, span, page_w)):
             pn = first_page_num + i
-            out_path = project.pages_dir / _page_filename(pn)
+            out_path = out_dir / _page_filename(pn)
             physical.save(out_path)
             results[pn] = out_path
-
-    slots_path.write_text(json.dumps(slots, indent=2), encoding="utf-8")
     return results
 
 

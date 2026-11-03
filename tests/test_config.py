@@ -253,6 +253,7 @@ def test_repo_config_assembly_defaults_match_module_defaults():
 
     cfg = load_config(_REPO_CONFIG)
     assert cfg_get(cfg, "assembly.page_height_px") == assembler._DEFAULT_PAGE_HEIGHT_PX
+    assert cfg_get(cfg, "assembly.print_page_height_px") == assembler._DEFAULT_PRINT_PAGE_HEIGHT_PX
     assert cfg_get(cfg, "assembly.gutter_px") == assembler._DEFAULT_GUTTER_PX
     assert cfg_get(cfg, "assembly.bg_color") == assembler._DEFAULT_BG_COLOR
     assert cfg_get(cfg, "assembly.stretch_tolerance") == assembler._DEFAULT_STRETCH_TOLERANCE

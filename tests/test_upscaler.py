@@ -1,29 +1,52 @@
 """Tests for lazycomics.upscaler.
 
-All tests mock the subprocess call — Real-ESRGAN binary not required.
+The ONNX session is faked (nearest-neighbour 2x), so no model file or
+onnxruntime is needed: the tests cover tiling, the source-hash record and
+the skip rules.
 """
 
 from __future__ import annotations
 
+import hashlib
 import sys
 import tempfile
 from pathlib import Path
 from unittest import mock
 
+import numpy as np
+from PIL import Image
+
 SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
 
+from lazycomics import upscaler  # noqa: E402
 from lazycomics.project import create_project  # noqa: E402
-from lazycomics.upscaler import (  # noqa: E402
-    _load_upscaler_config,
-    _run_realesrgan,
-    upscale_pages,
-)
+from lazycomics.upscaler import SOURCE_KEY, upscale_panels  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+class _FakeSession:
+    """Stands in for an onnxruntime session: nearest-neighbour ``scale`` x."""
+
+    def __init__(self, scale: int = 2, dtype: str = "tensor(float)"):
+        self.scale = scale
+        self.calls = 0
+        self.dtypes = set()
+        self._input = mock.Mock(type=dtype)
+        self._input.name = "input"
+
+    def get_inputs(self):
+        return [self._input]
+
+    def run(self, _outputs, feeds):
+        x = feeds["input"]
+        self.calls += 1
+        self.dtypes.add(x.dtype)
+        return [x.repeat(self.scale, axis=2).repeat(self.scale, axis=3)]
 
 
 class _Env:
@@ -35,18 +58,16 @@ class _Env:
             "## T\naspect: 2:3\n\nPAGE preset:splash\n\nPANEL A\nloc: r\n> t\n"
         )
         self.project = create_project("utest", cbml, base_dir=self.root)
+        self.model = self.root / "model.onnx"
+        self.model.write_bytes(b"onnx")
+        self.config = {"upscaler": {"model_path": str(self.model)}}
 
-    def write_page(self, name: str = "page_1.png"):
-        self.project.pages_dir.mkdir(parents=True, exist_ok=True)
-        p = self.project.pages_dir / name
-        p.write_bytes(b"fakepage")
-        return p
-
-    def write_upscaled(self, name: str = "page_1.png"):
-        self.project.pages_upscaled_dir.mkdir(parents=True, exist_ok=True)
-        p = self.project.pages_upscaled_dir / name
-        p.write_bytes(b"upscaled")
-        return p
+    def write_panel(self, name: str = "p1", size=(40, 30), seed: int = 0) -> Path:
+        rng = np.random.default_rng(seed)
+        arr = rng.integers(0, 256, (size[1], size[0], 3), dtype=np.uint8)
+        path = self.project.panels_dir / f"{name}.png"
+        Image.fromarray(arr).save(path)
+        return path
 
     def close(self):
         self.tmp.cleanup()
@@ -63,132 +84,118 @@ def _with_env(fn):
     return wrapper
 
 
-def _base_config():
-    return {
-        "upscaler": {
-            "executable": "realesrgan-ncnn-vulkan",
-            "model": "realesrgan-x4plus-anime",
-            "scale": 4,
-        }
-    }
+def _run(env, session=None, **kw):
+    session = session or _FakeSession()
+    with mock.patch.object(upscaler, "_open_session", return_value=session) as opened:
+        results = upscale_panels(env.project, config=env.config, **kw)
+    return results, session, opened
 
 
 # ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
-
-def test_config_defaults():
-    cfg = _load_upscaler_config({})
-    assert cfg["model"] == "realesrgan-x4plus-anime"
-    assert cfg["scale"] == 4
-
-
-def test_config_overrides():
-    cfg = _load_upscaler_config({
-        "upscaler": {"model": "realesrgan-x4plus", "scale": 2}
-    })
-    assert cfg["model"] == "realesrgan-x4plus"
-    assert cfg["scale"] == 2
-
-
-# ---------------------------------------------------------------------------
-# upscale_pages
+# Output
 # ---------------------------------------------------------------------------
 
 
 @_with_env
-def test_upscale_no_pages_returns_empty(env):
-    results = upscale_pages(env.project, config=_base_config())
-    assert results == []
+def test_writes_each_panel_at_the_model_scale(env):
+    env.write_panel("p1", (40, 30))
+    env.write_panel("p2", (30, 40), seed=1)
+    results, _, _ = _run(env)
+    assert sorted(results) == ["p1", "p2"]
+    assert Image.open(results["p1"]).size == (80, 60)
+    assert Image.open(results["p2"]).size == (60, 80)
+    assert results["p1"] == env.project.panels_upscaled_dir / "p1.png"
 
 
 @_with_env
-def test_upscale_skips_when_all_exist(env):
-    env.write_page("page_1.png")
-    env.write_upscaled("page_1.png")
-
-    # Should not call subprocess at all
-    with mock.patch("lazycomics.upscaler.subprocess.run") as mock_run:
-        results = upscale_pages(env.project, config=_base_config())
-        mock_run.assert_not_called()
-
-    assert len(results) == 1
-    assert results[0].name == "page_1.png"
+def test_tiles_stitch_into_the_whole_image(env):
+    """A panel bigger than one tile comes out as if upscaled in one go."""
+    src = env.write_panel("p1", (500, 420))
+    results, session, _ = _run(env)
+    assert session.calls == 4  # 2 x 2 tiles of 384
+    want = np.asarray(Image.open(src)).repeat(2, axis=0).repeat(2, axis=1)
+    assert np.array_equal(np.asarray(Image.open(results["p1"])), want)
 
 
 @_with_env
-def test_upscale_force_regenerates(env):
-    env.write_page("page_1.png")
-    env.write_upscaled("page_1.png")
-
-    def fake_run(cmd, capture_output, text):
-        # Simulate writing upscaled output
-        out_dir = cmd[cmd.index("-o") + 1]
-        (Path(out_dir) / "page_1.png").write_bytes(b"re-upscaled")
-        return mock.Mock(returncode=0, stdout="", stderr="")
-
-    with mock.patch("lazycomics.upscaler.subprocess.run", side_effect=fake_run):
-        results = upscale_pages(env.project, force=True, config=_base_config())
-
-    assert len(results) == 1
-    assert results[0].read_bytes() == b"re-upscaled"
+def test_panel_smaller_than_the_padding(env):
+    """Too small to reflect into the tile padding: edge-padded instead."""
+    src = env.write_panel("p1", (12, 10))
+    results, _, _ = _run(env)
+    want = np.asarray(Image.open(src)).repeat(2, axis=0).repeat(2, axis=1)
+    assert np.array_equal(np.asarray(Image.open(results["p1"])), want)
 
 
 @_with_env
-def test_upscale_passes_correct_args(env):
-    env.write_page("page_1.png")
-
-    captured_cmd = []
-
-    def fake_run(cmd, capture_output, text):
-        captured_cmd.extend(cmd)
-        out_dir = cmd[cmd.index("-o") + 1]
-        Path(out_dir).mkdir(parents=True, exist_ok=True)
-        (Path(out_dir) / "page_1.png").write_bytes(b"upscaled")
-        return mock.Mock(returncode=0, stdout="", stderr="")
-
-    with mock.patch("lazycomics.upscaler.subprocess.run", side_effect=fake_run):
-        upscale_pages(env.project, force=True, config=_base_config())
-
-    assert "-i" in captured_cmd
-    assert "-o" in captured_cmd
-    assert "-n" in captured_cmd
-    n_idx = captured_cmd.index("-n")
-    assert captured_cmd[n_idx + 1] == "realesrgan-x4plus-anime"
-    s_idx = captured_cmd.index("-s")
-    assert captured_cmd[s_idx + 1] == "4"
+def test_float16_model_gets_float16_input(env):
+    env.write_panel("p1")
+    _, session, _ = _run(env, session=_FakeSession(dtype="tensor(float16)"))
+    assert session.dtypes == {np.dtype(np.float16)}
 
 
 @_with_env
-def test_upscale_multiple_pages(env):
-    env.write_page("page_1.png")
-    env.write_page("page_2.png")
-    env.write_page("page_3.png")
+def test_records_the_source_hash(env):
+    src = env.write_panel("p1")
+    results, _, _ = _run(env)
+    with Image.open(results["p1"]) as im:
+        assert im.info[SOURCE_KEY] == hashlib.sha1(src.read_bytes()).hexdigest()
 
-    def fake_run(cmd, capture_output, text):
-        out_dir = cmd[cmd.index("-o") + 1]
-        Path(out_dir).mkdir(parents=True, exist_ok=True)
-        for i in range(1, 4):
-            (Path(out_dir) / f"page_{i}.png").write_bytes(f"up_{i}".encode())
-        return mock.Mock(returncode=0, stdout="", stderr="")
 
-    with mock.patch("lazycomics.upscaler.subprocess.run", side_effect=fake_run):
-        results = upscale_pages(env.project, force=True, config=_base_config())
-
-    assert len(results) == 3
+# ---------------------------------------------------------------------------
+# Skip rules
+# ---------------------------------------------------------------------------
 
 
 @_with_env
-def test_upscale_failure_raises(env):
-    env.write_page("page_1.png")
+def test_skips_panels_already_upscaled_from_this_image(env):
+    env.write_panel("p1")
+    _run(env)
+    results, _, opened = _run(env)
+    opened.assert_not_called()  # nothing to do: the model isn't even loaded
+    assert list(results) == ["p1"]
 
-    with mock.patch(
-        "lazycomics.upscaler.subprocess.run",
-        return_value=mock.Mock(returncode=1, stdout="", stderr="Vulkan error"),
-    ):
-        try:
-            upscale_pages(env.project, force=True, config=_base_config())
-            assert False, "should have raised"
-        except RuntimeError as e:
-            assert "Vulkan error" in str(e)
+
+@_with_env
+def test_redoes_a_panel_whose_source_changed(env):
+    env.write_panel("p1", seed=0)
+    _run(env)
+    env.write_panel("p1", seed=1)  # regenerated
+    _, session, _ = _run(env)
+    assert session.calls == 1
+
+
+@_with_env
+def test_force_redoes_everything(env):
+    env.write_panel("p1")
+    _run(env)
+    _, session, _ = _run(env, force=True)
+    assert session.calls == 1
+
+
+@_with_env
+def test_only_the_named_panels(env):
+    env.write_panel("p1")
+    env.write_panel("p2", seed=1)
+    results, _, _ = _run(env, panels=["p2", "missing"])
+    assert list(results) == ["p2"]
+
+
+@_with_env
+def test_missing_model_raises(env):
+    env.write_panel("p1")
+    env.config["upscaler"]["model_path"] = str(env.root / "nope.onnx")
+    try:
+        upscale_panels(env.project, config=env.config)
+        assert False, "should have raised"
+    except FileNotFoundError as e:
+        assert "upscaler.model_path" in str(e)
+
+
+@_with_env
+def test_unset_model_raises(env):
+    env.write_panel("p1")
+    try:
+        upscale_panels(env.project, config={})
+        assert False, "should have raised"
+    except FileNotFoundError as e:
+        assert "upscaler.model_path" in str(e)

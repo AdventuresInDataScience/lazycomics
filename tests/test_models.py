@@ -100,9 +100,10 @@ def test_project_constructs():
         prompts_dir=Path("/tmp/demo/prompts"),
         refs_prepared_dir=Path("/tmp/demo/refs_prepared"),
         panels_dir=Path("/tmp/demo/panels"),
+        panels_upscaled_dir=Path("/tmp/demo/panels_upscaled"),
         panels_text_dir=Path("/tmp/demo/panels_text"),
         pages_dir=Path("/tmp/demo/pages"),
-        pages_upscaled_dir=Path("/tmp/demo/pages_upscaled"),
+        pages_print_dir=Path("/tmp/demo/pages_print"),
         output_dir=Path("/tmp/demo/output"),
         manifest_path=Path("/tmp/demo/manifest.json"),
     )

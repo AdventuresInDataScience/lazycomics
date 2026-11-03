@@ -1350,3 +1350,140 @@ def test_thought_cloud_is_drawn_inside_its_box():
         text_renderer._draw_thought(ImageDraw.Draw(img), 100, 100, w, h, 2)
         bbox = Image.eval(img.convert("L"), lambda v: 255 if v != 90 else 0).getbbox()
         assert bbox[0] >= 99 and bbox[1] >= 99 and bbox[2] <= 101 + w and bbox[3] <= 101 + h, (w, h, bbox)
+
+
+# ---------------------------------------------------------------------------
+# Lettering the upscaled copy (panels_upscaled/)
+# ---------------------------------------------------------------------------
+
+
+def _all_overlays(env, panel_id="p1"):
+    """A panel with a caption, an SFX and every bubble type, one face."""
+    env.set_faces([(60, 150, 120, 210)])
+    env.write_enriched(
+        panel_id,
+        caption_boxes=[{"text": "Meanwhile, downtown.", "position": "top-left"}],
+        sfx_lines=[{"text": "BLAM", "position": "bottom-right"}],
+        dialogue_lines=[
+            {"character": "NOVA", "text": "Did you hear that?", "bubble_type": "speech"},
+            {"character": "NOVA", "text": "Run!", "bubble_type": "shout"},
+            {"character": "NOVA", "text": "too late", "bubble_type": "whisper"},
+            {"character": "NOVA", "text": "Typical.", "bubble_type": "thought"},
+        ],
+        bubble_layout=[{"character": "NOVA", "x_frac": 0.0, "y_frac": 0.0,
+                        "width_frac": 1.0, "height_frac": 1.0}],
+    )
+
+
+def _write_upscaled(env, panel_id="p1", k=4, source=None, size=None, record=True):
+    """The upscaler's copy of a panel: its pixels, ``k`` x, nearest-neighbour."""
+    from PIL import PngImagePlugin
+    from lazycomics.upscaler import SOURCE_KEY
+    import hashlib
+    src = env.project.panels_dir / f"{panel_id}.png"
+    with Image.open(src) as im:
+        up = im.resize(size or (im.width * k, im.height * k), Image.NEAREST)
+    info = PngImagePlugin.PngInfo()
+    if record:
+        info.add_text(SOURCE_KEY, source or hashlib.sha1(src.read_bytes()).hexdigest())
+    env.project.panels_upscaled_dir.mkdir(parents=True, exist_ok=True)
+    up.save(env.project.panels_upscaled_dir / f"{panel_id}.png", pnginfo=info)
+
+
+def _layout(env, panel_id="p1"):
+    return json.loads((env.project.panels_text_dir / f"{panel_id}.layout.json").read_text())
+
+
+@_with_env
+def test_upscaled_copy_is_lettered_at_full_size_with_the_same_layout(env):
+    env.make_panel("p1", 400, 300)
+    _all_overlays(env)
+    render_text(env.project)
+    alone = _layout(env)
+
+    _write_upscaled(env, k=4)
+    render_text(env.project, force=True)
+    upscaled = _layout(env)
+
+    assert Image.open(env.project.panels_text_dir / "p1.png").size == (1600, 1200)
+    assert upscaled.pop("scale") == 4
+    assert upscaled == alone  # every decision, in panel px
+
+
+@_with_env
+def test_upscaled_lettering_lands_where_the_panel_lettering_does(env):
+    env.make_panel("p1", 400, 300)
+    _all_overlays(env)
+    render_text(env.project)
+    small = Image.open(env.project.panels_text_dir / "p1.png").convert("L")
+
+    _write_upscaled(env, k=4)
+    render_text(env.project, force=True)
+    big = Image.open(env.project.panels_text_dir / "p1.png").convert("L")
+
+    # Shrunk back, its ink lies where the panel-size lettering's does, give or
+    # take a pixel of anti-aliasing, and vice versa.
+    from PIL import ImageChops, ImageFilter
+
+    def ink(im):
+        return im.point(lambda v: 255 if v < 100 else 0)
+
+    def count(mask):
+        return mask.width * mask.height - mask.histogram()[0]
+
+    a, b = ink(big.resize(small.size, Image.BOX)), ink(small)
+    for x, y in ((a, b), (b, a)):
+        stray = ImageChops.subtract(x, y.filter(ImageFilter.MaxFilter(3)))
+        assert count(stray) < 0.01 * count(x)
+
+
+@_with_env
+def test_stale_upscaled_copy_raises(env):
+    env.make_panel("p1", 400, 300)
+    _all_overlays(env)
+    _write_upscaled(env, source="0" * 40)  # made from some other image
+    try:
+        render_text(env.project)
+        assert False, "should have raised"
+    except RuntimeError as e:
+        assert "re-run upscale_panels" in str(e)
+
+
+@_with_env
+def test_upscaled_copy_of_another_shape_raises(env):
+    env.make_panel("p1", 400, 300)
+    _all_overlays(env)
+    _write_upscaled(env, size=(1600, 1000))
+    try:
+        render_text(env.project)
+        assert False, "should have raised"
+    except ValueError as e:
+        assert "not an enlargement" in str(e)
+
+
+@_with_env
+def test_upscaled_copy_with_no_record_is_used_as_is(env):
+    # E.g. touched up in an image editor, which dropped the PNG text chunk.
+    env.make_panel("p1", 400, 300)
+    _all_overlays(env)
+    _write_upscaled(env, k=2, record=False)
+    render_text(env.project)
+    assert Image.open(env.project.panels_text_dir / "p1.png").size == (800, 600)
+    assert _layout(env)["scale"] == 2
+
+
+def test_tee_draw_scales_lines_radii_and_fonts():
+    small = Image.new("RGB", (100, 100), "white")
+    big = Image.new("RGB", (400, 400), "white")
+    draw = text_renderer._TeeDraw(small, big)
+    draw.rounded_rectangle([10, 10, 60, 40], radius=8, outline="#000000", width=2)
+    font = text_renderer._load_font(12)
+    draw.text((15, 60), "Hi", fill="#000000", font=font)
+    # The border is 2px on the panel and 8px on the 4x canvas.
+    assert [small.getpixel((x, 25))[0] < 128 for x in range(8, 14)].count(True) == 2
+    assert [big.getpixel((x, 100))[0] < 128 for x in range(36, 50)].count(True) == 8
+    # Measuring stays at panel scale: the layout never sees the canvas.
+    assert draw.textbbox((0, 0), "Hi", font=font) == ImageDraw.Draw(small).textbbox(
+        (0, 0), "Hi", font=font)
+    ink = Image.eval(big.convert("L").crop((40, 220, 400, 400)), lambda v: 255 - v).getbbox()
+    assert ink is not None and ink[3] - ink[1] > 4 * 6  # the text is drawn 4x tall

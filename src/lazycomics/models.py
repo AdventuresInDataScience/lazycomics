@@ -120,9 +120,10 @@ class Project:
     prompts_dir: Path
     refs_prepared_dir: Path
     panels_dir: Path
+    panels_upscaled_dir: Path
     panels_text_dir: Path
     pages_dir: Path
-    pages_upscaled_dir: Path
+    pages_print_dir: Path
     output_dir: Path
     manifest_path: Path
 

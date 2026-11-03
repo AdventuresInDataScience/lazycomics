@@ -24,7 +24,9 @@ Needs the project to have been through ``render_text`` and
 project's existing panels (forced, at the ``assembly.*`` page size from
 ``lazycomics_config.yaml``), so any project is a lettering regression set
 with no GPU: e.g. the e2e's 33 panels, in seconds. It overwrites
-``panels_text/`` and ``pages/``, hand edits included.
+``panels_text/`` and ``pages/``, hand edits included, and leaves the print
+pages (``pages_print/``) as they were. Panels the project has upscaled
+(``panels_upscaled/``) are lettered at that size, as the pipeline does.
 """
 
 from __future__ import annotations
@@ -46,11 +48,15 @@ from lazycomics.project import load_project  # noqa: E402
 
 def reletter(project: Project, config: dict, panels: list[str] | None = None) -> None:
     """Re-letter ``panels`` (default: all) and re-assemble every page, forced,
-    at the page size ``config`` gives (``assembly.*``)."""
+    at the page size ``config`` gives (``assembly.*``).
+
+    The checks read the screen pages only, so print pages are skipped:
+    ``pages_print/`` is left as it was."""
     lc.render_text(project, panels=panels, force=True, config=config)
     lc.assemble_pages(
         project,
         page_height_px=cfg_get(config, "assembly.page_height_px", None),
+        print_page_height_px=0,
         gutter_px=cfg_get(config, "assembly.gutter_px", None),
         bg_color=cfg_get(config, "assembly.bg_color", None),
         stretch_tolerance=cfg_get(config, "assembly.stretch_tolerance", None),

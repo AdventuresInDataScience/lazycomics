@@ -28,6 +28,12 @@ dependencies = [
 [project.optional-dependencies]
 # Optional LLM-assisted prompt refinement.
 llm = ["requests"]
+# Panel upscaling (upscale_panels). DirectML runs the model on any Windows
+# GPU; elsewhere the CPU build (slow) unless you swap in onnxruntime-gpu.
+upscale = [
+    "onnxruntime-directml; sys_platform == 'win32'",
+    "onnxruntime; sys_platform != 'win32'",
+]
 dev = ["pytest"]
 
 [tool.setuptools.packages.find]
