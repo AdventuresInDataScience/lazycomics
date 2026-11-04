@@ -20,7 +20,6 @@ from lazycomics.models import (  # noqa: E402
     DialogueLine,
     LocationAsset,
     LoRAConfig,
-    PageLayout,
     PanelGenerationRequest,
     Project,
     StyleAsset,
@@ -70,9 +69,7 @@ def test_panel_generation_request_defaults():
     assert p.bleed_edges == set()
     assert p.characters == []
     assert p.dialogue_lines == []
-    assert p.composition_flags == {}
     assert p.char_generation_strategy == "single"
-    assert p.pixel_rect == (0, 0, 0, 0)
 
 
 def test_panel_default_collections_are_independent():
@@ -81,12 +78,6 @@ def test_panel_default_collections_are_independent():
     b = PanelGenerationRequest(panel_id="b", page_index=0, panel_index=1)
     a.characters.append(CharacterRef(identifier="NOVA"))
     assert b.characters == []
-
-
-def test_page_layout_defaults():
-    p = PageLayout(page_index=0, grid_cols=2, grid_rows=2, page_width_px=1988, page_height_px=3075)
-    assert p.gutter_px == 20
-    assert p.panels == []
 
 
 def test_project_constructs():

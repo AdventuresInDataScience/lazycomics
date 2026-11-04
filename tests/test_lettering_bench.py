@@ -1,8 +1,9 @@
-"""Smoke test for tools/lettering_bench.py's synthetic comics.
+"""Smoke tests for tools/lettering_bench.py: its synthetic comics and copies.
 
 The bench is a dev tool, but its synthetic set is what keeps lettering
 changes honest beyond the story they were tuned on, so a broken generator
-should fail loudly here rather than quietly letter nothing.
+should fail loudly here rather than quietly letter nothing. Its copies must
+never write the projects they're taken from.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 REPO = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO / "src"))
@@ -41,3 +43,23 @@ def test_synthetic_comic_is_seeded_and_letters_end_to_end():
         lettering_bench.reletter(a, {"assembly": {"page_height_px": 600}})
         for pid in pids:
             assert not [i for i in review.check_panel(a, pid) if i.kind in ("record", "missing")]
+
+
+def test_copy_letters_at_1x_and_leaves_the_source_alone():
+    with tempfile.TemporaryDirectory() as tmp:
+        src = lettering_bench.synthetic_comic(Path(tmp) / "src", seed=3, pages=1)
+        src.panels_upscaled_dir.mkdir(exist_ok=True)
+        pid = next(src.enriched_dir.glob("*.json")).stem
+        (src.panels_upscaled_dir / f"{pid}.png").write_bytes(b"not read")
+        before = {p.name: p.read_bytes() for p in src.enriched_dir.glob("*.json")}
+
+        copy = lettering_bench._copy(src.base_dir, Path(tmp) / "copy")
+        lettering_bench.reletter(copy, {"assembly": {"page_height_px": 600}})
+
+        assert not copy.panels_upscaled_dir.exists()
+        with Image.open(copy.panels_text_dir / f"{pid}.png") as lettered, \
+                Image.open(copy.panels_dir / f"{pid}.png") as panel:
+            assert lettered.size == panel.size
+        # Faces are cleared in the copy only.
+        assert {p.name: p.read_bytes() for p in src.enriched_dir.glob("*.json")} == before
+        assert "detected_faces" in json.loads((src.enriched_dir / f"{pid}.json").read_text())

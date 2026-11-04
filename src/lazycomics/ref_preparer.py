@@ -48,11 +48,14 @@ from lazycomics.models import Project, StyleAsset
 __all__ = ["prepare_references"]
 
 
-# Ref ordering knobs (``refs.*`` in lazycomics_config.yaml; W4.3 experiments).
-# Module constants so the shipped config and the parity test stay in lockstep.
-_DEFAULT_CHARACTERS_FIRST = False
-_DEFAULT_CLOSEUP_LOCATION = True
-_DEFAULT_MAX_REFS = None
+# Ref ordering knobs (``refs.*`` in lazycomics_config.yaml). Module constants
+# so the shipped config and the parity test stay in lockstep. Characters
+# first and a cap of 4 (W10.3): generation 11% faster on the subset with the
+# consistency bar holding; the cap then drops style and location refs before
+# any character's.
+_DEFAULT_CHARACTERS_FIRST = True
+_DEFAULT_CLOSEUP_LOCATION = False
+_DEFAULT_MAX_REFS = 4
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +69,7 @@ def prepare_references(
     *,
     force: bool = False,
     working_resolution: int = 1024,
+    max_refs: int | None = None,
     config: dict[str, Any] | None = None,
 ) -> dict[str, list[Path]]:
     """Prepare reference images for each enriched panel.
@@ -89,6 +93,9 @@ def prepare_references(
         Long-edge cap in pixels for the prepared images (downscale only).
         Defaults to 1024. Wan2GP rescales every ref to the output's pixel
         area anyway, so this sets source quality, not generation cost.
+    max_refs
+        Most refs sent per panel, cut from the end of the stack; overrides
+        ``refs.max_refs``. ``0`` = no cap; ``None`` uses the config.
     config
         Loaded config dict for the ``refs.*`` ordering knobs; if ``None``,
         calls ``load_config()`` internally.
@@ -98,7 +105,8 @@ def prepare_references(
     opts = {
         "characters_first": cfg_get(config, "refs.characters_first", _DEFAULT_CHARACTERS_FIRST),
         "closeup_location": cfg_get(config, "refs.closeup_location", _DEFAULT_CLOSEUP_LOCATION),
-        "max_refs": cfg_get(config, "refs.max_refs", _DEFAULT_MAX_REFS),
+        "max_refs": max_refs if max_refs is not None
+                    else cfg_get(config, "refs.max_refs", _DEFAULT_MAX_REFS),
     }
     style = _try_get_style(project)
     style_refs = [Path(p) for p in style.reference_images] if style else []
@@ -189,11 +197,12 @@ def _order_sources(
     """Every source for the panel, deduplicated, in the order the bridge sends them.
 
     Klein has no per-ref weight, so order and count are the only levers
-    (``Docs/PLAN.md`` W10.3). Default: primary (see
+    (``Docs/PLAN.md`` W10.3). ``characters_first`` (the default) puts every
+    character (primary first) before style and location, wide shots
+    included; without it the order is primary (see
     :func:`_select_primary_source`), style, location, other characters.
-    ``characters_first`` puts every character (primary first) before style
-    and location, wide shots included. ``closeup_location: false`` drops the
-    location ref on close-ups that show a character.
+    ``closeup_location: false`` (the default) drops the location ref on
+    close-ups that show a character.
     """
     primary = _select_primary_source(panel)
     if primary is None:

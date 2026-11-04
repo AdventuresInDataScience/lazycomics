@@ -9,7 +9,8 @@ On 2026-11-03 the leftover generation faults became W11 (Refinement) and
 the LoRA work moved from W11 to W12; the archives still call it W11. W9
 closed the same day; its record is in Reference, "Upscaler (from W9)".
 On 2026-11-04 `tests/` was reorganised and "golden run" became "A/B run";
-old paths and names map in Reference, "Where runs live"._
+old paths and names map in Reference, "Where runs live". W10 closed the
+same day; its record is in Reference, "Speed settings (from W10)"._
 
 **How this doc works.**
 - Status lives only in the two tables below: workstreams, then open
@@ -24,10 +25,9 @@ old paths and names map in Reference, "Where runs live"._
 
 **Priorities, in order:**
 1. Sign off a full e2e run, every stage, reviewed by you (milestone).
-2. Tidy-up (W10).
-3. Refinement (W11): the generation-quality faults moved out of W8 so it
+2. Refinement (W11): the generation-quality faults moved out of W8 so it
    could close.
-4. LoRA work (W12), last: only after the e2e is signed off and W11 is
+3. LoRA work (W12), last: only after the e2e is signed off and W11 is
    done, on its own branch.
    The pipeline aims for consistency without LoRAs, to avoid the training
    cost.
@@ -40,28 +40,33 @@ old paths and names map in Reference, "Where runs live"._
 | W7 Lettering | **Done** 2026-11-03 on your read of the re-lettered e2e pages: no overlaps, faces uncovered, tails on every matched speaker, the lettering bench. Archived. |
 | W8 Generation fixes | **Done** 2026-11-03 on your read. Kept: dialogue and SFX as refiner context, rule checks on every refined prompt, the group cue where two or more speak, signage reworded in descriptions, two `story.cbml` edits, the refiner bench and a held-out script. Rejected: NAG, 8 steps. Leftovers moved to W11. Archived. |
 | W9 Upscaling | **Done** 2026-11-03: panels are upscaled 4x before lettering (`realesrgan-x4plus-anime`, ONNX on DirectML, your pick of four), lettered at that size with the layout unchanged, and assembled into 3000px pages for the `.cbz` plus 6000px print pages. Ran in the full e2e (2026-11-03). In Reference, "Upscaler (from W9)". |
-| **e2e sign-off (milestone)** | **Next.** A full e2e run, every stage, meeting W7–W9's done-whens and your review. W9's run (2026-11-03) ran every stage and awaits your read. The gate for W11 and W12. |
-| W10 Tidy-up | Not started. Unused model fields; refinement, A/B-run and lettering-bench speed. |
-| W11 Refinement | Not started; after the sign-off and W10. The generation-quality faults moved out of W8: painted bubbles (problem 8), 3 of 4 drawn on the 0.22 strip and `page_2_panel_1`'s residue (problem 16). Added 2026-11-04 from your read of the W9 e2e: the Intern drawn as a second Ranjeet (`page_4_panel_3`). |
+| **e2e sign-off (milestone)** | **Next.** A full e2e run, every stage, meeting W7–W9's done-whens and your review. The run at W10's defaults (2026-11-04, 28:06, 32/33 clean) ran every stage and awaits your read. The gate for W11 and W12. |
+| W10 Tidy-up | **Done** 2026-11-04 on your sign-off, after the e2e at its defaults ran in 28:06 (41:45 before). Unused model fields removed; refiner thinking off with a new style rule (e2e refinement 13.5 → 3.8 min); refs characters first, capped at 4 (generation −11% on the subset); `llm.url` on `127.0.0.1`; lettering bench ~113s → ~74s. New A/B baseline `w10_refs_max4`. In Reference, "Speed settings (from W10)". |
+| W11 Refinement | Not started; after the sign-off. The generation-quality faults moved out of W8: painted bubbles (problem 8), 3 of 4 drawn on the 0.22 strip and `page_2_panel_1`'s residue (problem 16). Added 2026-11-04 from your read of the W9 e2e: the Intern drawn as a second Ranjeet (`page_4_panel_3`). |
 | W12 LoRA path | **Parked** until the e2e sign-off and W11: the last workstream, on its own branch. Train and judge one character's LoRA, then fix the inpaint path (problem 6). |
 
-## Where things stand (2026-11-03)
+## Where things stand (2026-11-04)
 
-- **Unit tests:** 477 pass (`pytest tests --ignore=tests/e2e`, ~20s).
-- **Full e2e (2026-11-03, W9):** every stage ran on real Wan2GP + Ollama,
-  upscaling included, and W8's code and `story.cbml` edits for the first
-  time. Not signed off: it's in `tests/outputs/e2e/` for your review.
+- **Unit tests:** 482 pass (`pytest tests --ignore=tests/e2e`, ~20s).
+- **Full e2e (2026-11-04, W10's defaults):** every stage ran on real Wan2GP
+  + Ollama, upscaling included. It's in `tests/outputs/e2e/` for your
+  read, the candidate for the sign-off.
   - `story.cbml`, 33 panels → 10 pages (2000×3000, plus 4000×6000 print
-    copies) → a 50 MB `.cbz`, in 41:45 on AC: 24.7 min of generation, 97s of
-    upscaling, ~15 min for the rest, mostly LLM refinement.
-  - Checks: 31/33 panels clean. `page_1_panel_1`: line 2's tail crosses
-    line 1 (the new art's layout, the same at 1x). `page_10_panel_1`:
-    Gerald's line has no tail, his face unmatched (fail closed).
-  - Consistency not yet scored on this run (`sheet_characters.png`).
-  - Your partial read (2026-11-04): `page_3_panel_3`'s gibberish bubble is
-    painted into the art, the known problem 8 (W11); `page_4_panel_3`
-    draws the Intern as a second Ranjeet, now a W11 item.
+    copies) → a 52 MB `.cbz`, in **28:06** on AC (W9's run: 41:45):
+    - refinement 3.8 min (13.5); 32 of 33 panels retried, all for the
+      style's last clause (W10.2) and one also for a quoted SFX; none fell
+      back to the original; every prompt keeps the whole style (none did
+      before);
+    - generation 21.3 min (24.8), 101 refs (121);
+    - upscaling 1.5 min.
+  - Checks: 32/33 panels clean. `page_3_panel_1`: line 4's tail points
+    through line 2 (the layout on new art; the same panel as the subset's
+    `page_1_panel_1` in `w10_defaults`). W9's two faults are gone.
+  - My read of all 10 pages: no fault new with W10. The cast is on-model
+    on `sheet_characters.png`. The W11 items, on this run, are under W11.
 - **Earlier e2e runs**, in `tests/archive/e2e/`:
+  - `2026-11-03_w9/`: W9's run, at the old defaults; your partial read of
+    it (pages 3 and 4) gave two W11 items. 31/33 clean.
   - `2026-11-01/`: kept as it was generated, the "before" every problem
     below cites. 41.5 min on AC: 13 min of LLM refinement, 27 min of
     generation. Characters on-model in all 52 appearances where they're
@@ -70,10 +75,11 @@ old paths and names map in Reference, "Where runs live"._
   - `2026-11-02_w7_relettered/`: the same panels re-lettered by W7,
     30/33 clean; four speakers with no tail because their face wasn't
     matched (fail closed).
-- **A/B baseline:** the A/B run `w8_frozen` (12/12 clean on the checks),
-  since W8 changed five frozen prompts. Its frozen prompts are in
-  `tests/fixtures/main_story/subset_prompts/`. The previous baseline,
-  `w4_prompts`, is what W8's runs were judged against.
+- **A/B baseline:** the A/B run `w10_refs_max4` (12/12 clean on the
+  checks), since W10 changed the ref defaults: the frozen prompts in
+  `tests/fixtures/main_story/subset_prompts/` at today's defaults. The
+  previous baselines: `w8_frozen` (W10's runs were judged against it) and
+  `w4_prompts` (W8's).
 - **W8's regenerated story panels**, from before the 2026-11-03 e2e ran its
   code and the two `story.cbml` edits (`page_2_panel_1`'s background
   characters, `page_5_panel_1`'s neon), are in `tests/archive/ab_runs/`,
@@ -141,16 +147,16 @@ properly.
 
 1. **Full e2e on AC:** `pytest tests/e2e/test_integration_e2e.py -v -s`,
    then `python tools/contact_sheet.py tests/outputs/e2e`, then your
-   read of every page. W10.2 (LLM refinement speed) would cut the run's 13 min
-   of refinement, if you want it first.
-   W9's run (2026-11-03) has done the first two: it and its sheets are in
-   `tests/outputs/e2e/`, so what's left is your read, unless something
-   changes first. Read `pages/` (the `.cbz`) and spot-check `pages_print/`.
-   Pages 3 and 4 read so far (2026-11-04): both faults went to W11.
+   read of every page. Read `pages/` (the `.cbz`) and spot-check
+   `pages_print/`.
+   - The run at W10's defaults (2026-11-04, 28:06) is in
+     `tests/outputs/e2e/`, with its sheets: what's left is your read.
+   - W9's run (2026-11-03) is archived as `tests/archive/e2e/2026-11-03_w9/`.
+     You read its pages 3 and 4; both faults went to W11.
 2. **Keep it.** Move the signed-off run to
-   `tests/archive/e2e/<date>_signoff/`. W8 already replaced `w4_prompts`
-   with `w8_frozen` as the A/B baseline; replace it again only if something
-   later changes the subset's output.
+   `tests/archive/e2e/<date>_signoff/`. W10 made `w10_refs_max4` the A/B
+   baseline; replace it again only if something later changes the
+   subset's output.
 
 **Done when:**
 - every stage ran, upscaling included, and the `.cbz` opens in a viewer;
@@ -158,31 +164,7 @@ properly.
 - your review finds none of the W7 or W8 faults, or you've moved what's
   left to "left as is" or W11.
 
-### W10 — Tidy-up
-
-1. **Unused model fields.** Delete the `PanelGenerationRequest` fields with
-   no consumer (`pixel_rect`, `occlusion_order`, `composition_flags`,
-   `panel_context`, `pose_ref`, `lora_stack`, in-dataclass
-   `prompt`/`negative_prompt`) and the unused `PageLayout` model. W12 needs
-   none of them: LoRAs attach per character (`CharacterRef.lora`), and the
-   inpaint fix only changes task fields.
-2. **LLM refinement speed.** 33 prompts took 13 min (~25s each), with Ollama
-   loading gemma4 at a 128k context. Try a smaller context on the Ollama
-   server (e.g. `OLLAMA_CONTEXT_LENGTH`).
-3. **A/B-run speed.** It takes 582s against W2's 8-minute target. The
-   lever is fewer refs, since each costs about one output image of tokens
-   (A/B against `w8_frozen`, consistency bar must hold):
-   - `--set refs.characters_first=true --set refs.closeup_location=false`;
-   - then `--set refs.max_refs=N`.
-
-   Then decide whether to keep the 8-minute target.
-4. **Lettering-bench speed.** Since W9 its tune set re-letters the e2e on
-   its 4x upscaled panels: 72s where it took ~20s, ~2.5 min for the whole
-   bench. The layout is the same at 1x (W9 checked all 33 panels), so the
-   bench could letter a 1x copy of the e2e instead, leaving the e2e's own
-   lettering as it is.
-
-### W11 — Refinement. After the e2e sign-off and W10.
+### W11 — Refinement. After the e2e sign-off.
 
 The generation-quality faults you moved out of W8 so it could close
 (2026-11-03), to revisit once the pipeline is signed off. They don't block
@@ -202,6 +184,7 @@ to "left as is".
     script edits), or a LoRA identity (W12).
   - Lettering still points both tails right, because both speakers are
     drawn (`w8_frozen`, `w8_story`).
+  - 2026-11-04 e2e (W10's defaults): still 3 of 4, Ranjeet dropped.
 - **Speech bubbles and text painted into the art** (problem 8). The image
   model draws its own bubbles, blank or with gibberish, which the lettering
   can't move or remove.
@@ -214,6 +197,12 @@ to "left as is".
     2026-11-01 and 2026-11-03 e2e runs, and `w4_prompts`, `w8_frozen` and
     `w8_refined`. Same seed and near-identical prompts give the same
     composition, so it recurs rather than being bad luck.
+  - W10's defaults (thinking off, the style rule): no painted speech bubble
+    on it in `w10_defaults` or the 2026-11-04 e2e, the first runs without
+    one. Ranjeet holds a printout with scribbles instead. Two runs; nothing
+    has isolated which change did it. That e2e's other painted text: a
+    small "?" on `page_9_panel_1`, and the props on page 7 (the
+    investigation board, the ID card, a "Vampire identifiation" printout).
   - The e2e's `page_8_panel_2` had two ("!!/", "ちっ!"), gone with W8's
     prompts.
   - Props invite text too: story `page_7_panel_1`'s investigation board was
@@ -236,6 +225,7 @@ to "left as is".
     Ranjeet's outfit (white shirt, rolled sleeves, dark trousers) and has
     his face without the stubble. The lettering is right for the slot: the
     Intern's tail points at the double.
+  - 2026-11-04 e2e (W10's defaults): the same double again.
   - 2026-11-01 e2e (before W8's group cue): three people, no Intern at all.
     The cue ("four people, left to right: …, each clearly visible") is the
     likely reason a fourth person now appears. A pixel A/B hasn't isolated
@@ -257,6 +247,8 @@ to "left as is".
     beside Ranjeet.
   - Before the edit, every W8 run posed all four in a row, with the group
     cue or without it.
+  - 2026-11-04 e2e: no line-up, but two older men stand in David's glass
+    office, where the script has only David.
   - Lesson: when a panel's `chars:` lists characters its action doesn't
     place, say where they are.
 
@@ -308,7 +300,7 @@ Reference, "AI Toolkit with Klein".
    `ai_toolkit.resolutions` first, then try `layer_offloading: true`.
 4. **Full run and judge it.** The same command with `--force` (2000 steps),
    then `ab_run.py --lora GERALD=<path> --set
-   enricher.multi_char_strategy=single --baseline w8_frozen`.
+   enricher.multi_char_strategy=single --baseline w10_refs_max4`.
    - Judge on solo panels. Under `single` the LoRA applies to the whole
      panel, so other characters in it may pick up Gerald's look; under
      `auto`, multi-character panels go to the inpaint path, which is broken
@@ -332,15 +324,16 @@ Reference, "AI Toolkit with Klein".
 **Done when:**
 - one character's LoRA trains in a documented time and is registered with
   `set_lora`;
-- an A/B run with it is at least as consistent as `w8_frozen`
+- an A/B run with it is at least as consistent as `w10_refs_max4`
   (Reference, "Consistency bar");
 - a 2-character panel with that LoRA comes out of the inpaint path without
   the "two disjointed halves" seam.
 
 ### Deferred (no consumer, or not worth it yet)
 
-- Stay-resident Wan2GP worker (old §14.10). Reconsider if A/B iterations
-  stay slow after W10.3.
+- Stay-resident Wan2GP worker (old §14.10). W10.3 brought an A/B run to
+  ~7.4 min; ~35s of each is loading the model. Reconsider if iterations
+  still feel slow.
 - SAM segmentation (old §14.7).
 - Comic-tuned face detector (old §14.2): problem 14. W7 traced no lettering
   fault to it.
@@ -394,7 +387,8 @@ checks it.
 |---|---|---|---|
 | Each character's description verbatim, labelled `Name (…)` | It's how the model tells the cast apart (W4: no hair colour gave a white-haired Gerald). Kept in 145 of 145 refined prompts on disk. | `_char_to_prompt_text` | `_rule_breaks` `description` |
 | Group cue, "N people, left to right: …, each clearly visible", in `chars:` order, on panels with 3+ characters of whom 2+ speak | Draws the cast in the order the tails assume: subset `page_4_panel_1` 2 → 3 of 4, held-out cue panels in order. Doesn't stop a crowd shot posing in a row (problem 16). | `group_cue` | `_rule_breaks` `cue` |
-| The cue first in the prompt | Asked for by the system prompt; no evidence it matters. `page_2_panel_1` lined up with the cue first and with it last. | system prompt only | not checked (the refiner bench counts it: 3 of 7) |
+| The cue first in the prompt | Asked for by the system prompt; no evidence it matters. `page_2_panel_1` lined up with the cue first and with it last. | system prompt only | not checked (the refiner bench counts it: 3 of 7 thinking on, 7 of 7 off) |
+| The style descriptor verbatim (it may move) | Refinement trimmed it: of its 6 clauses, thinking-on prompts kept ~4, thinking-off ~3 (W10.2). The thinking-off A/B's two panels that lost "moody noir lighting…" came out lighter (not isolated). | system prompt | `_rule_breaks` `style` |
 | Dialogue and SFX never quoted | Quoted text gets painted (problem 8): "removing his office tie (KRRK)". | inline reminder in the context | `_rule_breaks` `quoted` |
 | Dialogue and SFX shown as action | David writes under SCRIBBLE; shouted lines give shouting faces; a hand on the door under KNOCK KNOCK. | `_format_context`, inline | can't be checked |
 | No signs, posters, banners or billboards | Filled with gibberish (problem 7). Rewording `THE_BAR.txt`: lettered signs in 7 of 7 story bar panels → 1 of 7. | the descriptions (README, "Writing descriptions") | `build_prompts` warns on the input; `_rule_breaks` `signage` rejects any the refiner adds |
@@ -500,15 +494,88 @@ the PNG write, ~10s a page). From the dry run on the W7 e2e: lettering at 4x
 adds ~2.4s a page and the print pages another ~2.4s. About 6 MB on disk per
 upscaled panel and per lettered panel; the `.cbz` is 50 MB for 10 pages.
 
+### Speed settings (from W10)
+
+W10 closed 2026-11-04 on your sign-off, after the e2e at its defaults ran
+in 28:06 (W9's: 41:45). Measured on AC power. Its runs are in
+`tests/archive/ab_runs/2026-11-04_w10_*/` (the baseline, `w10_refs_max4`,
+stays in `tests/outputs/ab_runs/`), and the comparison sheets are in
+`tests/outputs/reviews/w10_refs/`.
+
+**W10.1, unused model fields.** `PanelGenerationRequest` lost
+`pixel_rect`, `occlusion_order`, `composition_flags`, `panel_context`,
+`pose_ref`, `lora_stack`, `prompt` and `negative_prompt`, and `PageLayout`
+is gone. Requests are only written to `enriched/*.json` and read back as
+dicts, so older projects with the keys still load. `w10_base` (frozen
+prompts, old ref defaults) matched `w8_frozen` exactly in all 12 panels.
+
+**W10.2, the refiner: thinking off, with a style rule.**
+- The cause wasn't the context size: at 8k and at Ollama's default 131k,
+  gemma4 sits 100% on the GPU at ~50 tokens/s. ~80% of each reply
+  (750–1,300 tokens) went on hidden reasoning before the prompt.
+- Thinking is off by default: `refine_prompts_with_llm(think=...)` →
+  `llm.think` → off. Off sends `reasoning_effort: "none"` (OpenAI's field,
+  which Ollama honours on `/v1`; its own `think` flag isn't). `--think` /
+  `--no-think` on `ab_run.py` and the refiner bench.
+- `localhost` cost ~2.05s per request (Windows tries IPv6 first; Ollama
+  listens on `127.0.0.1` only), so `llm.url` uses `127.0.0.1`.
+- Thinking off alone (`2026-11-04_w10_nothink`) trimmed more of the style
+  descriptor (~3 of its 6 clauses kept, ~4 thinking on, and nothing
+  checked it). Its A/B had more painted bubbles on `page_1_panel_1` and
+  Ranjeet's `page_1_panel_3`, your read of what mattered, and those panels
+  came out lighter. Hence the `style` rule (Reference, "Prompt rules").
+- Refiner bench, thinking off with the rule: 19 of 23 clean first time
+  (22 thinking on, 17 off without the rule), 0 originals kept, 75s
+  against ~9 min. Thinking-on results:
+  `tests/archive/refiner_bench/2026-11-03_thinking_on/`.
+- On the main story every first reply drops the style's last clause,
+  "contemporary urban setting", probably read as the setting, and the
+  retry restores it: a second ~3s call per panel. Rewording `Style.txt`
+  would save it; left as is, since the script is yours.
+- At the new defaults (`2026-11-04_w10_defaults` and the e2e): no painted
+  speech bubble on Ranjeet's panel, and the dark noir look of the
+  thinking-on runs. E2e refinement 13.5 → 3.8 min.
+
+**W10.3, the refs: characters first, capped at 4.**
+`prepare_references(max_refs=...)` → `refs.max_refs` → 4 (0 = no cap),
+with `characters_first: true` and `closeup_location: false`; `--max-refs N`
+on `ab_run.py`. With characters first, the cap drops the style and location
+refs before any character's. Frozen prompts, `--force`; per-panel times
+summed, since the first run paid ~68s of cold model loading and the others
+~35s:
+
+| Run | Refs (12 panels) | Wall | Per-panel sum | Checks |
+|---|---|---|---|---|
+| `w10_base` (old defaults) | 46 | 522s | 454s | 12/12 |
+| `w10_refs_v1`: `characters_first`, no `closeup_location` | 42 | 480s | 446s (−2%) | 11/12 (problem 4 on the strip) |
+| `w10_refs_max4`: the same + `max_refs: 4` | 37 | 441s | 405s (−11%) | 12/12 |
+
+- The savings are on the 5–6-ref panels (subset `page_2_panel_4` 79s →
+  56s); close-ups without the location save ~4s each. `max_refs: 3` would
+  drop a character, so it wasn't run.
+- The consistency bar held on your read and mine, with the baseline's two
+  strip misses; style and setting unchanged on the capped panels.
+- An A/B run is ~7.4 min warm, under W2's 8-minute target. E2e generation
+  24.8 → 21.3 min.
+- `w10_refs_max4` became the A/B baseline: the frozen prompts at these
+  defaults.
+
+**W10.4, the lettering bench** letters copies of its tune set at 1x under
+`tests/outputs/lettering_bench/tune/`, as it does the holdout set
+(`lettering_bench._copy`). Tune 61s → 22s, the bench ~113s → ~74s, every
+set's output identical line for line. It no longer writes the e2e or
+`w4_prompts`.
+
 ### Benches and held-out sets (from W7 and W8)
 
 You asked for these on 2026-11-02, so that fixes don't overfit the test
 story (e.g. by relying on this cast's distinct skin tones). Each judges a
 change beyond the panels it was tuned on. Their first results are in the
 W7–W8 archive.
-- **Lettering bench** (`tools/lettering_bench.py`, ~2.5 min since W9,
-  no GPU; W10.4). It re-letters three sets and tallies the checks:
-  - *tune*: the e2e and `w4_prompts`, re-lettered in place;
+- **Lettering bench** (`tools/lettering_bench.py`, ~75s, no GPU). It
+  re-letters copies of three sets at 1x and tallies the checks, without
+  writing the projects it copies:
+  - *tune*: the e2e and `w4_prompts`;
   - *holdout*: copies of the three older archived runs (57 panels,
     different art), checked only after a change, never while making it;
   - *synthetic*: seeded random comics run through the real pipeline, varying
@@ -518,7 +585,8 @@ W7–W8 archive.
   It also scores attribution against hand labels
   (`tests/fixtures/face_labels.json`, 20 labelled panels keyed by image
   hash).
-- **Refiner bench** (`tools/refiner_bench.py`, ~9 min, LLM only). It refines
+- **Refiner bench** (`tools/refiner_bench.py`, ~75s with thinking off, ~9
+  min with `--think`; LLM only). It refines
   a seeded synthetic script (its own cast, places, actions, dialogue and
   SFX) and the held-out script. It scores each first reply against
   `_rule_breaks` (Reference, "Prompt rules"), and counts retries and
@@ -535,12 +603,12 @@ W7–W8 archive.
 
 | Changed | Run | Time |
 |---|---|---|
-| Text rendering / bubble layout | `python tools/lettering_bench.py --sets tune` while working, then the full `python tools/lettering_bench.py` (tune, holdout, synthetic; see "Benches and held-out sets") before keeping it. `python tools/contact_sheet.py <project> --reletter` re-letters any one project | ~70s / ~2.5 min (the e2e is lettered at 4x since W9: W10.4) |
+| Text rendering / bubble layout | `python tools/lettering_bench.py --sets tune` while working, then the full `python tools/lettering_bench.py` (tune, holdout, synthetic; see "Benches and held-out sets") before keeping it. `python tools/contact_sheet.py <project> --reletter` re-letters any one project itself, the e2e at 4x | ~25s / ~75s |
 | The upscaler (model, tiling) or print pages | On a copy of the e2e project: `lc.upscale_panels(project, force=True)`, `lc.render_text(project, force=True)`, `lc.assemble_pages(project, force=True)`. The layout records must not change; compare crops of `pages/` and `pages_print/` with the e2e's | ~3 min |
-| Anything upstream of generation (bridge, refs, `refs`/`wan2gp` config) | `python tools/ab_run.py --force --out <name> --baseline w8_frozen [--set KEY=VALUE ...]` | ~10 min on AC (582s measured); ~23 min on battery |
-| Character descriptions, the prompt template or the refiner | `python tools/refiner_bench.py` (LLM only) while working. Then an A/B run with `--refine`, and the held-out script: `python tools/ab_run.py --story tests/fixtures/holdout_story --refine --force --out <name>`. Freeze `tests/outputs/ab_runs/<name>/project/prompts/*.txt` into `tests/fixtures/main_story/subset_prompts/` if it wins | ~9 min / + ~1 min / ~8 min |
+| Anything upstream of generation (bridge, refs, `refs`/`wan2gp` config) | `python tools/ab_run.py --force --out <name> --baseline w10_refs_max4 [--max-refs N] [--set KEY=VALUE ...]` | ~8 min on AC (441s of generation at W10's defaults, 2026-11-04); ~20 min on battery |
+| Character descriptions, the prompt template or the refiner | `python tools/refiner_bench.py` (LLM only) while working. Then an A/B run with `--refine`, and the held-out script: `python tools/ab_run.py --story tests/fixtures/holdout_story --refine --force --out <name>`. Freeze `tests/outputs/ab_runs/<name>/project/prompts/*.txt` into `tests/fixtures/main_story/subset_prompts/` if it wins | ~75s / + ~1 min / ~8 min |
 | A character LoRA (training settings, its training set) | `python tools/train_lora.py train <project> <ID> --force`, then an A/B run with `--lora <ID>=<path>` (W12, step 4) | training: unmeasured; + ~10 min |
-| Before a release / after contract changes | `python tests/smoke/two_panels.py` (2-panel smoke test, minutes), then `pytest tests/e2e/test_integration_e2e.py -v -s` (replaces `tests/outputs/e2e/`) | ~40 min on AC |
+| Before a release / after contract changes | `python tests/smoke/two_panels.py` (2-panel smoke test, minutes), then `pytest tests/e2e/test_integration_e2e.py -v -s` (replaces `tests/outputs/e2e/`: archive a run worth keeping first) | ~30 min on AC (28:06 on 2026-11-04) |
 
 `ab_run.py` writes `report.txt` (`review.check_panel`: aspect, text cut
 off by the slot, reading order, overlaps, faces covered, tails),
@@ -561,14 +629,16 @@ Since 2026-11-04 `tests/e2e/` holds the end-to-end test and nothing else:
   `e2e/`, `smoke/`, `ab_runs/<name>/`, `lettering_bench/`, `refiner_bench/`,
   and `reviews/<name>/` for one-off comparison sheets;
 - runs kept on purpose go to `tests/archive/`, in the same layout:
-  `e2e/<date>[_label]/`, `ab_runs/<date>_<name>/`. Both are gitignored.
+  `e2e/<date>[_label]/`, `ab_runs/<date>_<name>/`,
+  `refiner_bench/<date>_<label>/`. Both are gitignored.
 
 `ab_run.py` takes a bare run name for `--out`/`--baseline` (a folder in
 `tests/outputs/ab_runs/`), or a path. `tests/outputs/ab_runs/` keeps only
-the runs still in use: `w8_frozen` (the A/B baseline), `w4_prompts` (the
-lettering bench's tune set), `w6_gerald` (W12's training set) and
-`holdout_story` (the latest held-out run). W8's other runs moved to the
-archive. Names and paths in the archived plans, by current location:
+the runs still in use: `w10_refs_max4` (the A/B baseline), `w8_frozen`
+(the previous one), `w4_prompts` (the lettering bench's tune set),
+`w6_gerald` (W12's training set) and `holdout_story` (the latest held-out
+run). W8's and W10's other runs are in the archive. Names and paths in the
+archived plans, by current location:
 
 | In the archived plans | Now |
 |---|---|

@@ -79,18 +79,25 @@ enricher:
 # ref, its location. Klein has no per-reference weight, so order and count
 # are the only levers, and each ref costs about one output image's worth of
 # generation time.
+#
+# These three defaults go together (W10.3): on the subset they cut
+# generation 11%, with the consistency bar holding. With characters first,
+# the cap drops style and location refs before any character's; with it
+# off, the cap would drop characters.
 refs:
+  # true: every character first (primary first), then style, then location.
   # false: primary first (the primary character's ref, or the location's on
   # wide/establishing shots), then style, location, other characters.
-  # true: every character first (primary first), then style, then location.
-  characters_first: false
+  characters_first: true
 
   # Include the location ref on close-ups that show a character. false drops
   # it, so the close-up is conditioned on the character and style only.
-  closeup_location: true
+  closeup_location: false
 
   # Most refs sent per panel; the stack is cut from the end. null = no cap.
-  max_refs: null
+  # prepare_references(max_refs=N) and ab_run.py --max-refs N override it
+  # (0 = no cap).
+  max_refs: 4
 
 
 # ---------------------------------------------------------------------------
@@ -102,8 +109,19 @@ refs:
 # replace `url` with the relevant OpenAI-compatible endpoint and (where
 # required) set `api_key`.
 llm:
-  url: http://localhost:11434/v1
+  # 127.0.0.1, not localhost: Ollama listens on IPv4 only, and on Windows
+  # "localhost" tries IPv6 first, which adds ~2s to every request.
+  url: http://127.0.0.1:11434/v1
   model: gemma4:e4b-it-q8_0
+
+  # Let a thinking model (gemma4, qwen3, ...) reason before answering.
+  # false sends `reasoning_effort: "none"` (OpenAI's field, which Ollama
+  # honours); gemma4 otherwise spends ~80% of each reply reasoning, and off
+  # the refiner bench ran ~7x faster (W10.2). true sends nothing, which is
+  # also the setting for servers that reject the field (e.g. OpenAI's
+  # non-reasoning models). refine_prompts_with_llm(think=...) and
+  # ab_run.py --think / --no-think override it.
+  think: false
 
   # Bearer token for hosted services. Leave null for local servers that
   # don't require auth (Ollama, llama.cpp server, LM Studio).

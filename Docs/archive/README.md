@@ -15,7 +15,9 @@ Code comments of the form `plan §N` or `§14.x` (in `src/lazycomics/*.py` and
 `lazycomics_config.yaml`) refer to sections of the archived
 `2026-06-10_Implementation_plan.md`. Comments citing W1, W3 or W4 refer to
 `2026-11-01_PLAN_W0-W4.md`, W6 to `2026-11-02_PLAN_W5-W6.md`, and W7 or W8
-(including "Docs/PLAN.md, W8") to `2026-11-03_PLAN_W7-W8.md`. W11 in these
+(including "Docs/PLAN.md, W8") to `2026-11-03_PLAN_W7-W8.md`. W9 and W10
+(W10.1–W10.4 included) closed into `PLAN.md`'s Reference: "Upscaler (from
+W9)" and "Speed settings (from W10)". W11 in these
 files is the LoRA path, renumbered W12 on 2026-11-03 when W11 became
 Refinement. The design principles and forward contracts were
 carried over into `PLAN.md`.

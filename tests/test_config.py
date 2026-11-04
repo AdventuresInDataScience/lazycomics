@@ -185,6 +185,7 @@ _EXPECTED_KEYS = [
     "llm.url",
     "llm.model",
     "llm.api_key",
+    "llm.think",
     "llm.system_prompt",
     # text_renderer.py
     "text.dialogue_font_ratio",
@@ -302,6 +303,13 @@ def test_repo_config_refs_defaults_match_module_defaults():
     assert cfg_get(cfg, "refs.characters_first") == rp._DEFAULT_CHARACTERS_FIRST
     assert cfg_get(cfg, "refs.closeup_location") == rp._DEFAULT_CLOSEUP_LOCATION
     assert cfg_get(cfg, "refs.max_refs") == rp._DEFAULT_MAX_REFS
+
+
+def test_repo_config_llm_think_matches_module_default():
+    """``llm.think`` in the sample config must equal the refiner's fallback."""
+    from lazycomics import llm_refiner  # noqa: PLC0415
+
+    assert cfg_get(load_config(_REPO_CONFIG), "llm.think") is llm_refiner._DEFAULT_THINK
 
 
 def test_repo_config_ai_toolkit_defaults_match_module_defaults():

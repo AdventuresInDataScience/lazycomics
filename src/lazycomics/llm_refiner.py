@@ -6,7 +6,8 @@ Ollama, LM Studio, llama.cpp server, vLLM, and any other service that
 speaks the OpenAI API surface.
 
 System-prompt precedence: function arg → ``llm.system_prompt`` in config →
-:data:`DEFAULT_SYSTEM_PROMPT`. The first refinement of each panel writes
+:data:`DEFAULT_SYSTEM_PROMPT`. Thinking, likewise: ``think`` arg →
+``llm.think`` → off. The first refinement of each panel writes
 the original to ``.txt.bak``; subsequent re-runs do not overwrite that
 backup, so the *original* original is always preserved as the user's
 safety net.
@@ -23,6 +24,7 @@ import re
 import shutil
 from typing import Any
 
+from lazycomics.asset_registry import get_style
 from lazycomics.config import cfg_get, load_config
 from lazycomics.models import Project
 from lazycomics.prompt_builder import SIGNAGE, group_cue
@@ -34,6 +36,12 @@ __all__ = ["refine_prompts_with_llm", "DEFAULT_SYSTEM_PROMPT"]
 # panels of the 2026-11-01 A/B run (gemma4 8B on Ollama), so they were
 # silently left unrefined.
 _TIMEOUT_S = 300
+
+# Thinking off: each request sends ``reasoning_effort: "none"`` (OpenAI's
+# field, which Ollama honours). gemma4 otherwise spends ~80% of each reply
+# reasoning; off, the refiner bench ran ~7x faster (W10.2). Module constant
+# so the shipped config and the parity test stay in lockstep.
+_DEFAULT_THINK = False
 
 
 DEFAULT_SYSTEM_PROMPT = """\
@@ -64,6 +72,9 @@ OUTPUT RULES
   D, each clearly visible", keep it VERBATIM, word for word and in the same
   order, at the start of the prompt. It makes the image model draw everyone
   in the panel, in the order the lettering expects.
+- Keep the art style descriptor VERBATIM, every part of it, in its original
+  order. You may move it, e.g. to the end. Dropping part of it (lighting,
+  tone) changes the look of the panel.
 - Do NOT invent new details (colours, lighting, props, weather, expressions)
   that are not already present in the input or implied by its dialogue and
   sound effects.
@@ -99,6 +110,7 @@ def refine_prompts_with_llm(
     *,
     system_prompt: str | None = None,
     backup: bool = True,
+    think: bool | None = None,
 ) -> dict[str, tuple[str, str]]:
     """Refine prompt ``.txt`` files via an OpenAI-compatible LLM.
 
@@ -117,6 +129,11 @@ def refine_prompts_with_llm(
         If ``True`` (default), the original ``.txt`` is copied to
         ``.txt.bak`` *the first time* the panel is refined. Subsequent
         refinements do not overwrite the ``.bak``.
+    think
+        Let a thinking model reason before it answers. ``False`` sends
+        ``reasoning_effort: "none"``; ``True`` sends nothing, leaving the
+        model's default. ``None`` falls back to ``llm.think`` in config,
+        then off.
 
     Returns
     -------
@@ -134,6 +151,8 @@ def refine_prompts_with_llm(
     url = cfg_get(cfg, "llm.url", None)
     model = cfg_get(cfg, "llm.model", None)
     api_key = cfg_get(cfg, "llm.api_key", None)
+    if think is None:
+        think = cfg_get(cfg, "llm.think", _DEFAULT_THINK)
 
     if not url:
         raise ValueError(
@@ -164,10 +183,12 @@ def refine_prompts_with_llm(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    style = _project_style(project)
     results: dict[str, tuple[str, str]] = {}
     for panel_id in panel_ids:
         pair = _refine_one(
             project, panel_id, endpoint, headers, model, system_prompt, backup,
+            think, style,
         )
         if pair is not None:
             results[panel_id] = pair
@@ -179,6 +200,14 @@ def refine_prompts_with_llm(
 # ---------------------------------------------------------------------------
 
 
+def _project_style(project: Project) -> str:
+    """The style descriptor ``build_prompts`` puts in every prompt ('' if none)."""
+    try:
+        return get_style(project).prompt_prefix.strip()
+    except FileNotFoundError:
+        return ""
+
+
 def _refine_one(
     project: Project,
     panel_id: str,
@@ -187,6 +216,8 @@ def _refine_one(
     model: str,
     system_prompt: str,
     backup: bool,
+    think: bool = _DEFAULT_THINK,
+    style: str = "",
 ) -> tuple[str, str] | None:
     txt_path = project.prompts_dir / f"{panel_id}.txt"
     if not txt_path.is_file():
@@ -210,6 +241,8 @@ def _refine_one(
         ],
         "temperature": 0.3,
     }
+    if not think:
+        body["reasoning_effort"] = "none"
 
     refined = _call_llm(endpoint, headers, body)
     if refined is None:
@@ -221,7 +254,7 @@ def _refine_one(
         print(f"[refine] {panel_id}: LLM returned empty content, keeping original")
         return None
 
-    broken = _rule_breaks(refined, original, panel)
+    broken = _rule_breaks(refined, original, panel, style)
     if broken:
         # One retry, told what broke; failing that, the original stands.
         print(f"[refine] {panel_id}: retrying ({', '.join(kind for kind, _ in broken)})")
@@ -230,7 +263,7 @@ def _refine_one(
             {"role": "user", "content": _RETRY.format("; ".join(why for _, why in broken))},
         ]
         refined = (_call_llm(endpoint, headers, body) or "").strip()
-        broken = _rule_breaks(refined, original, panel) if refined else broken
+        broken = _rule_breaks(refined, original, panel, style) if refined else broken
         if broken or not refined:
             print(f"[refine] {panel_id}: refined prompt still breaks the rules "
                   f"({'; '.join(why for _, why in broken) or 'empty reply'}), keeping original")
@@ -285,7 +318,8 @@ def _format_context(panel: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _rule_breaks(refined: str, original: str, panel: dict[str, Any]) -> list[tuple[str, str]]:
+def _rule_breaks(refined: str, original: str, panel: dict[str, Any],
+                 style: str = "") -> list[tuple[str, str]]:
     """The system prompt's rules that ``refined`` breaks and ``original`` kept.
 
     Returns ``(kind, why)`` pairs; ``why`` is sent back to the LLM on the
@@ -303,6 +337,8 @@ def _rule_breaks(refined: str, original: str, panel: dict[str, Any]) -> list[tup
       (problem 16).
     - ``description``: it changes a character's description, which is how
       the image model tells the cast apart (W4).
+    - ``style``: it drops or changes part of the project's ``style``
+      descriptor, which the refiner trimmed in both thinking modes (W10.2).
     - ``signage``: it adds signs, posters, banners or billboards, which come
       out as gibberish lettering (problem 7).
     """
@@ -331,6 +367,10 @@ def _rule_breaks(refined: str, original: str, panel: dict[str, Any]) -> list[tup
         if desc and norm(desc) in norm(original) and norm(desc) not in norm(refined):
             broken.append(("description", f"it changes {c.get('identifier')}'s description: "
                                           f'keep "{desc}" word for word'))
+
+    if style and norm(style) in norm(original) and norm(style) not in norm(refined):
+        broken.append(("style", f'it drops or changes part of the art style: keep "{style}" '
+                                "word for word"))
 
     broken += [("signage", f'it adds "{word}", which the image model fills with gibberish '
                            "lettering: describe light and shape instead")

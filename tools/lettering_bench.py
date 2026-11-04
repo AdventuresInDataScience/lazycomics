@@ -9,17 +9,22 @@ Usage::
 A lettering change is judged on more than the panels it was tuned on, so
 that it generalises rather than fitting this one story's art:
 
-* ``tune``: the panels lettering is developed against, re-lettered in
-  place: the live e2e project (``tests/outputs/e2e``) and the A/B run
-  ``w4_prompts``.
+* ``tune``: the panels lettering is developed against: copies of the live
+  e2e project (``tests/outputs/e2e``) and the A/B run ``w4_prompts`` under
+  ``tests/outputs/lettering_bench/tune/<name>/``.
 * ``holdout``: older runs with different art, checked only after a change
   is made, never while tuning it. Copies of three runs in
   ``tests/archive/`` (``e2e/2026-06-10``, ``ab_runs/2026-10-30_baseline``
   and ``ab_runs/2026-10-30_w3``) under
-  ``tests/outputs/lettering_bench/holdout/<name>/``. The archives themselves
-  are never written. The June run's panels were generated at the wrong
-  aspect, so its ``aspect``/``slot`` issues are generation faults, not
-  lettering ones.
+  ``tests/outputs/lettering_bench/holdout/<name>/``. The June run's panels
+  were generated at the wrong aspect, so its ``aspect``/``slot`` issues are
+  generation faults, not lettering ones.
+
+The bench only ever writes its copies; the projects they're taken from are
+left as they were. The copies leave out upscaled panels, so they're lettered
+at 1x: the layout is decided at 1x either way (W9), and it's ~3x faster.
+``python tools/contact_sheet.py <project> --reletter`` re-letters a project
+itself.
 * ``synthetic``: seeded random comics (:func:`synthetic_comic`) under
   ``tests/outputs/lettering_bench/synthetic/seed_<n>/``. They cover random page
   layouts, and through them panel aspects from strips to wide panels, casts
@@ -66,7 +71,10 @@ from lazycomics.geometry import resolution_for_aspect  # noqa: E402
 from contact_sheet import reletter  # noqa: E402  (sibling script in tools/)
 
 TESTS = REPO / "tests"
-TUNE = [TESTS / "outputs" / "e2e", TESTS / "outputs" / "ab_runs" / "w4_prompts" / "project"]
+TUNE = {
+    "e2e": TESTS / "outputs" / "e2e",
+    "w4_prompts": TESTS / "outputs" / "ab_runs" / "w4_prompts" / "project",
+}
 HOLDOUT = {
     "2026-06-10_e2e": TESTS / "archive" / "e2e" / "2026-06-10",
     "2026-10-30_ab_baseline": TESTS / "archive" / "ab_runs" / "2026-10-30_baseline" / "project",
@@ -91,13 +99,10 @@ def main(argv: list[str] | None = None) -> int:
 
     projects: dict[str, list[lc.Project]] = {}
     for name in args.sets.split(","):
-        if name == "tune":
-            projects[name] = [lc.load_project(p) for p in TUNE if (p / "manifest.json").is_file()]
-            for p in projects[name]:
-                _forget_faces(p)
-        elif name == "holdout":
-            projects[name] = [_holdout_copy(src, OUT / "holdout" / n)
-                              for n, src in HOLDOUT.items() if src.is_dir()]
+        if name in ("tune", "holdout"):
+            sources = TUNE if name == "tune" else HOLDOUT
+            projects[name] = [_copy(src, OUT / name / n) for n, src in sources.items()
+                              if (src / "manifest.json").is_file()]
         elif name == "synthetic":
             projects[name] = [synthetic_comic(OUT / "synthetic" / f"seed_{s}", int(s), args.pages)
                               for s in args.seeds.split(",")]
@@ -143,18 +148,24 @@ def _forget_faces(project: lc.Project) -> None:
             path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def _holdout_copy(src: Path, dst: Path) -> lc.Project:
-    """A fresh copy of an archived project, its absolute paths rewritten."""
+def _copy(src: Path, dst: Path) -> lc.Project:
+    """A fresh copy of a project to letter, its absolute paths rewritten.
+
+    Upscaled panels are left out, so the copy is lettered at 1x, along with
+    everything the bench regenerates (lettered panels, pages) or never reads.
+    """
     if dst.exists():
         shutil.rmtree(dst)
     shutil.copytree(src, dst, ignore=shutil.ignore_patterns(
-        "pages_upscaled", "panels_upscaled", "pages_print", "output"))
+        "panels_upscaled", "pages_upscaled", "panels_text", "pages", "pages_print",
+        "output", "refs_prepared", "sheet_*.png"))
     old, new = (json.dumps(str(p.resolve()))[1:-1] for p in (src, dst))
     for path in dst.rglob("*.json"):
         text = path.read_text(encoding="utf-8")
         if old in text:
             path.write_text(text.replace(old, new), encoding="utf-8")
     project = lc.load_project(dst)
+    project.panels_text_dir.mkdir()
     _forget_faces(project)
     return project
 

@@ -195,7 +195,7 @@ def test_wide_shot_prefers_location_ref(env):
         characters=[_char("X", [char_src])],
         loc_reference_images=[str(loc_src)],
     )
-    prepare_references(env.project)
+    prepare_references(env.project, config=_refs_cfg())  # characters_first off
 
     out = Image.open(env.project.refs_prepared_dir / "p1_ref.png").convert("RGB")
     r, g, b = out.getpixel((out.size[0] // 2, out.size[1] // 2))
@@ -295,7 +295,8 @@ def test_no_primary_character_backward_compat(env):
 
 @_with_env
 def test_wide_shot_overrides_primary_character(env):
-    """Wide/establishing shots pick location ref even when primary_character is set."""
+    """With characters_first off, wide/establishing shots pick the location ref
+    even when primary_character is set."""
     char_src = env.make_src("char.png", 600, 600, colour=(255, 0, 0))
     loc_src = env.make_src("loc.png", 600, 600, colour=(0, 255, 0))
     env.write_enriched(
@@ -305,7 +306,7 @@ def test_wide_shot_overrides_primary_character(env):
         loc_reference_images=[str(loc_src)],
         primary_character="NOVA",
     )
-    prepare_references(env.project)
+    prepare_references(env.project, config=_refs_cfg())
 
     out = Image.open(env.project.refs_prepared_dir / "p1_ref.png").convert("RGB")
     r, g, _ = out.getpixel((out.size[0] // 2, out.size[1] // 2))
@@ -441,12 +442,13 @@ def _colours(env, result, panel_id="p1"):
 
 
 def _refs_cfg(**refs):
+    """``refs.*`` with every knob off (the order before W10.3), plus ``refs``."""
     return {"refs": {"characters_first": False, "closeup_location": True,
                      "max_refs": None, **refs}}
 
 
 def _wide_two_char_panel(env):
-    """Wide shot: by default the location leads; A is primary, B second."""
+    """Wide shot: with characters_first off the location leads; A is primary, B second."""
     register_style(env.project, prompt_prefix="x",
                    reference_images=[env.make_src("style.png", 600, 600, _GREY)])
     env.write_enriched(
@@ -461,7 +463,7 @@ def _wide_two_char_panel(env):
 
 
 @_with_env
-def test_default_order_unchanged(env):
+def test_order_with_every_knob_off(env):
     _wide_two_char_panel(env)
     result = prepare_references(env.project, config=_refs_cfg())
     assert _colours(env, result) == [_GREEN, _GREY, _RED, _BLUE]  # loc, style, A, B
@@ -492,6 +494,35 @@ def test_max_refs_cuts_the_stack_from_the_end(env):
     _wide_two_char_panel(env)
     result = prepare_references(env.project, config=_refs_cfg(max_refs=2))
     assert _colours(env, result) == [_GREEN, _GREY]
+
+
+@_with_env
+def test_max_refs_arg_overrides_config_and_zero_means_no_cap(env):
+    _wide_two_char_panel(env)
+    full = prepare_references(env.project, force=True, config=_refs_cfg())
+    capped = prepare_references(env.project, force=True, max_refs=2, config=_refs_cfg(max_refs=3))
+    assert len(capped["p1"]) == 2
+    uncapped = prepare_references(env.project, force=True, max_refs=0, config=_refs_cfg(max_refs=2))
+    assert len(uncapped["p1"]) == len(full["p1"]) > 2
+
+
+@_with_env
+def test_defaults_cap_style_and_location_before_any_character(env):
+    # W10.3's defaults: characters first, at most 4 refs.
+    yellow = (255, 255, 0)
+    register_style(env.project, prompt_prefix="x",
+                   reference_images=[env.make_src("style.png", 600, 600, _GREY)])
+    env.write_enriched(
+        "p1",
+        shot_hint="wide shot",
+        characters=[_char(n, [env.make_src(f"{n}.png", 600, 600, c)])
+                    for n, c in (("A", _RED), ("B", _BLUE), ("C", yellow))],
+        primary_character="A",
+        inpaint_order=["A", "B", "C"],
+        loc_reference_images=[str(env.make_src("loc.png", 600, 600, _GREEN))],
+    )
+    result = prepare_references(env.project, config={})
+    assert _colours(env, result) == [_RED, _BLUE, yellow, _GREY]  # A, B, C, style; no loc
 
 
 @_with_env

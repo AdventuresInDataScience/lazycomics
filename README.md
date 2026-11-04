@@ -132,8 +132,9 @@ final fallback.
 
 ```yaml
 llm:
-  url: http://localhost:11434/v1   # Ollama default
+  url: http://127.0.0.1:11434/v1   # Ollama; "localhost" costs ~2s a request on Windows
   model: llama3.1:8b
+  think: false                      # thinking models: skip the reasoning (~7x faster)
   api_key:                          # optional, e.g. for OpenAI
   system_prompt: |
     Optional custom system prompt for prompt refinement.
@@ -245,11 +246,11 @@ tools/                        ab_run.py, contact_sheet.py, lettering_bench.py,
 ```bash
 pytest tests --ignore=tests/e2e                     # unit tests, ~20s
 python tests/smoke/two_panels.py                    # Wan2GP bridge smoke test, minutes
-python tools/ab_run.py --force --out NAME --baseline w8_frozen    # A/B run of the subset, ~10 min
+python tools/ab_run.py --force --out NAME --baseline w10_refs_max4    # A/B run of the subset, ~8 min
 python tools/ab_run.py --story tests/fixtures/holdout_story --refine --force --out NAME
                                                     # the held-out script, ~8 min
 python tools/refiner_bench.py                       # refiner rules on synthetic + held-out scripts, LLM only, ~9 min
-pytest tests/e2e/test_integration_e2e.py -v -s      # full e2e, 30+ min
+pytest tests/e2e/test_integration_e2e.py -v -s      # full e2e, ~30 min on AC
 python tools/contact_sheet.py tests/outputs/e2e [--reletter]   # sheets + checks for any project
 python tools/lettering_bench.py                     # lettering checks on tuning, held-out + synthetic panels, ~2.5 min
 python tools/train_lora.py dataset|train PROJECT_DIR CHARACTER   # LoRA training set, then LoRA

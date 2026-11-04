@@ -17,6 +17,7 @@ SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
 
 from lazycomics import llm_refiner  # noqa: E402
+from lazycomics.asset_registry import register_style  # noqa: E402
 from lazycomics.llm_refiner import (  # noqa: E402
     DEFAULT_SYSTEM_PROMPT,
     refine_prompts_with_llm,
@@ -376,6 +377,24 @@ def test_body_carries_model_and_messages(env):
     assert "the prompt" in body["messages"][1]["content"]
 
 
+@_with_env
+def test_thinking_is_off_by_default_and_on_by_config_or_arg(env):
+    env.write_prompt("p1", "the prompt")
+    refine_prompts_with_llm(env.project)
+    assert env.calls[-1]["body"]["reasoning_effort"] == "none"
+
+    env.write_config("llm:\n  url: http://fake-llm/v1\n  model: fake-model\n  think: true\n")
+    refine_prompts_with_llm(env.project)
+    assert "reasoning_effort" not in env.calls[-1]["body"]
+
+    # The arg beats the config, either way.
+    refine_prompts_with_llm(env.project, think=False)
+    assert env.calls[-1]["body"]["reasoning_effort"] == "none"
+    env.write_config("llm:\n  url: http://fake-llm/v1\n  model: fake-model\n  think: false\n")
+    refine_prompts_with_llm(env.project, think=True)
+    assert "reasoning_effort" not in env.calls[-1]["body"]
+
+
 # ---------------------------------------------------------------------------
 # Context from enriched JSON
 # ---------------------------------------------------------------------------
@@ -521,6 +540,21 @@ def test_added_sign_words_are_retried_but_kept_ones_are_not(env):
     retry = env.calls[1]["body"]["messages"][-1]["content"]
     assert '"billboard"' in retry and '"sign"' not in retry  # "signs" was in the original
     assert (env.project.prompts_dir / "p1.txt").read_text() == "Nova waits by a bar in the rain, neon signs.\n"
+
+
+@_with_env
+def test_trimmed_style_is_retried_but_a_moved_one_is_not(env):
+    # W10.2: the refiner trimmed the style descriptor; it may move it, not cut it.
+    style = "noir comic art, moody lighting with deep shadows"
+    register_style(env.project, prompt_prefix=style)
+    env.write_prompt("p1", f"{style}, Nova waits in the rain")
+    env.write_enriched("p1")
+    env.responses = ["Nova waits in the rain, noir comic art.",
+                     f"Nova waits in the rain, {style.capitalize()}."]
+    refine_prompts_with_llm(env.project)
+    assert len(env.calls) == 2
+    assert f'"{style}"' in env.calls[1]["body"]["messages"][-1]["content"]
+    assert (env.project.prompts_dir / "p1.txt").read_text().endswith("deep shadows.\n")
 
 
 @_with_env

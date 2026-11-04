@@ -5,6 +5,7 @@ tally which of its rules it breaks.
 Usage::
 
     python tools/refiner_bench.py [--sets synthetic,holdout] [--seed 1] [--panels 16]
+                                  [--think | --no-think]
 
 The refiner's rules (``llm_refiner.DEFAULT_SYSTEM_PROMPT``) were worked out
 on the e2e story. This checks they hold on other scripts. It needs the LLM
@@ -24,8 +25,9 @@ broken first time, how often the retry fixes it, and how often the original
 prompt is kept. It also counts how often a refined prompt starts with the
 group cue, which the system prompt asks for but nothing checks. Each panel's
 built prompt, first reply and final prompt go to
-``tests/outputs/refiner_bench/<set>.txt``. About 23s a panel with
-gemma4 8B on Ollama, so ~9 min for both sets; run from the repo root so the
+``tests/outputs/refiner_bench/<set>.txt``. With gemma4 on Ollama, about
+3s a panel with thinking off (``llm.think``, the default; ~75s for both
+sets) and 23s with ``--think`` (~9 min); run from the repo root so the
 config is found.
 """
 
@@ -55,7 +57,7 @@ HOLDOUT_STORY = REPO / "tests" / "fixtures" / "holdout_story"
 OUT = REPO / "tests" / "outputs" / "refiner_bench"
 
 # Table rows, in order.
-ROWS = ["panels", "clean first time", "  quoted", "  cue", "  description", "  signage",
+ROWS = ["panels", "clean first time", "  quoted", "  cue", "  description", "  style", "  signage",
         "  no reply", "retried", "  fixed by the retry", "kept the original",
         "group-cue panels", "  refined prompt starts with it (not checked)"]
 
@@ -72,9 +74,11 @@ def main(argv: list[str] | None = None) -> int:
             register_story_assets(project, HOLDOUT_STORY)
         else:
             raise SystemExit(f"unknown set {name!r}: use synthetic and/or holdout")
-        results[name] = bench(project, OUT / f"{name}.txt")
+        results[name] = bench(project, OUT / f"{name}.txt", think=args.think)
 
-    print(f"\nrefiner bench, llm.model = {cfg_get(config, 'llm.model', '?')}")
+    think = args.think if args.think is not None else cfg_get(config, "llm.think", False)
+    print(f"\nrefiner bench, llm.model = {cfg_get(config, 'llm.model', '?')}, "
+          f"thinking {'on' if think else 'off'}")
     print(f"{'':<48}" + "".join(f"{name:>12}" for name in results))
     for row in ROWS:
         print(f"{row:<48}" + "".join(f"{results[n][row.strip()]:>12}" for n in results))
@@ -87,10 +91,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap.add_argument("--sets", default="synthetic,holdout", help="comma-separated: synthetic, holdout")
     ap.add_argument("--seed", type=int, default=1, help="synthetic script seed")
     ap.add_argument("--panels", type=int, default=16, help="synthetic script length")
+    ap.add_argument("--think", action=argparse.BooleanOptionalAction, default=None,
+                    help="let the refiner reason before answering (default: llm.think, off)")
     return ap.parse_args(argv)
 
 
-def bench(project: lc.Project, report: Path) -> collections.Counter:
+def bench(project: lc.Project, report: Path, think: bool | None = None) -> collections.Counter:
     """Build and refine every panel; tally rule breaks and write ``report``."""
     lc.enrich(project)
     lc.build_prompts(project)
@@ -110,10 +116,11 @@ def bench(project: lc.Project, report: Path) -> collections.Counter:
 
     llm_refiner._call_llm = recording
     try:
-        lc.refine_prompts_with_llm(project)
+        lc.refine_prompts_with_llm(project, think=think)
     finally:
         llm_refiner._call_llm = call_llm
 
+    style = llm_refiner._project_style(project)
     tally: collections.Counter = collections.Counter()
     lines: list[str] = []
     for pid in sorted(panels, key=review.panel_sort_key):
@@ -121,7 +128,7 @@ def bench(project: lc.Project, report: Path) -> collections.Counter:
         got = replies[llm_refiner._format_user_message(original, llm_refiner._format_context(panel))]
         first = (got[0] or "").strip() if got else ""
         final = (project.prompts_dir / f"{pid}.txt").read_text(encoding="utf-8").rstrip()
-        breaks = llm_refiner._rule_breaks(first, original, panel) if first else []
+        breaks = llm_refiner._rule_breaks(first, original, panel, style) if first else []
         cue = group_cue(panel)
 
         tally["panels"] += 1

@@ -157,7 +157,7 @@ print(f"      {(project.prompts_dir / f'{first_id}.txt').read_text().strip()}")
 # lazycomics_config.yaml. Enable by adding:
 #
 #     llm:
-#       url: http://localhost:11434/v1
+#       url: http://127.0.0.1:11434/v1
 #       model: llama3.1:8b
 #
 # and uncommenting:

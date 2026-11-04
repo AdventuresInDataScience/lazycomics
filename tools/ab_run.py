@@ -5,7 +5,8 @@ Usage::
 
     python tools/ab_run.py [--out NAME] [--force] [--no-generate]
                            [--base-resolution N] [--baseline NAME]
-                           [--fresh-prompts | --refine] [--set KEY=VALUE ...]
+                           [--fresh-prompts | --refine [--think | --no-think]]
+                           [--max-refs N] [--set KEY=VALUE ...]
                            [--lora CHARACTER=PATH ...] [--story DIR]
 
 The subset is ``tests/fixtures/main_story/subset.cbml``: three page blocks
@@ -38,10 +39,16 @@ Iterating:
 * ``--baseline NAME`` (another run's name, or a path such as an archived run
   in ``tests/archive/ab_runs/``) adds that run's lettered panels as a
   column, and its character crops under this run's, for A/B review.
+* ``--think`` / ``--no-think`` let the refiner reason first, or not, for
+  this run (``llm.think``, off by default); only with ``--refine``.
+  ``--max-refs N`` caps the refs per panel (``refs.max_refs``, 4 by
+  default; 0 = no cap); pass ``--force`` with it.
 * ``--set KEY=VALUE`` overrides any config value for this run, e.g.
   ``--set wan2gp.default_steps=8`` (repeatable; values parse as YAML).
   ``--base-resolution N`` is shorthand for ``--set wan2gp.base_resolution=N``
-  (e.g. 768 for a faster loop). Combine either with ``--force``.
+  (e.g. 768 for a faster loop). Combine either with ``--force``. The
+  refiner reads ``lazycomics_config.yaml`` itself, so ``--set llm.*``
+  doesn't reach it: use ``--think`` / ``--no-think``.
 * ``--lora CHARACTER=PATH`` attaches a trained LoRA (``tools/train_lora.py``)
   to that character for this run, at ``ai_toolkit.lora_weight`` (so
   ``--set ai_toolkit.lora_weight=0.8`` A/Bs the weight), trigger word = the
@@ -121,13 +128,14 @@ def main(argv: list[str] | None = None) -> int:
                     key=review.panel_sort_key)
     lc.build_prompts(project)
     if args.refine:
-        lc.refine_prompts_with_llm(project, panels=panels)
+        lc.refine_prompts_with_llm(project, panels=panels, think=args.think)
         if not args.no_generate:
             _unload_llm(config)
     elif not args.fresh_prompts:
         for p in FROZEN_PROMPTS.glob("*.txt"):
             shutil.copy2(p, project.prompts_dir / p.name)
-    lc.prepare_references(project, panels=panels, force=True, config=config)
+    lc.prepare_references(project, panels=panels, force=True, max_refs=args.max_refs,
+                          config=config)
 
     reused = [p for p in panels if (project.panels_dir / f"{p}.png").is_file()]
     gen_s = None
@@ -160,6 +168,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     prompts.add_argument("--fresh-prompts", action="store_true", help="skip the frozen prompts")
     prompts.add_argument("--refine", action="store_true",
                          help="fresh prompts refined by the LLM (llm.* config)")
+    ap.add_argument("--think", action=argparse.BooleanOptionalAction, default=None,
+                    help="let the refiner reason before answering (default: llm.think, off)")
+    ap.add_argument("--max-refs", type=int, metavar="N",
+                    help="most refs per panel, 0 = no cap (default: refs.max_refs, 4)")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                     help="override a config value, e.g. wan2gp.default_steps=8 (repeatable)")
     ap.add_argument("--lora", action="append", default=[], metavar="CHARACTER=PATH",
@@ -249,8 +261,10 @@ def register_story_assets(project: lc.Project, story: Path) -> None:
 def _format_report(panels, issues, gen_s, reused, args, pages) -> str:
     lines = ["A/B run: " + time.strftime("%Y-%m-%d %H:%M")]
     flags = [f"--{k.replace('_', '-')}={item}" for k, v in vars(args).items()
-             if v not in (None, False) and k != "out"
+             if v is not None and v is not False and k != "out"
              for item in (v if isinstance(v, list) else [v])]
+    if args.think is False:
+        flags.append("--no-think")
     lines.append("flags: " + (" ".join(flags) or "(none)"))
     if gen_s is None:
         lines.append("generation: skipped (--no-generate)")
