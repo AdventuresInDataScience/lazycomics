@@ -10,17 +10,18 @@ A lettering change is judged on more than the panels it was tuned on, so
 that it generalises rather than fitting this one story's art:
 
 * ``tune``: the panels lettering is developed against, re-lettered in
-  place: the live e2e project (``tests/e2e/outputs/e2e``) and the golden run
+  place: the live e2e project (``tests/outputs/e2e``) and the A/B run
   ``w4_prompts``.
 * ``holdout``: older runs with different art, checked only after a change
-  is made, never while tuning it. Copies of ``archived_test_outputs/``
-  ``2026-06-10_e2e``, ``2026-10-30_golden_baseline`` and
-  ``2026-10-30_golden_w3`` under ``tests/e2e/outputs/holdout/<name>/``. The
-  archives themselves are never written. The June run's panels were
-  generated at the wrong aspect, so its ``aspect``/``slot`` issues are
-  generation faults, not lettering ones.
+  is made, never while tuning it. Copies of three runs in
+  ``tests/archive/`` (``e2e/2026-06-10``, ``ab_runs/2026-10-30_baseline``
+  and ``ab_runs/2026-10-30_w3``) under
+  ``tests/outputs/lettering_bench/holdout/<name>/``. The archives themselves
+  are never written. The June run's panels were generated at the wrong
+  aspect, so its ``aspect``/``slot`` issues are generation faults, not
+  lettering ones.
 * ``synthetic``: seeded random comics (:func:`synthetic_comic`) under
-  ``tests/e2e/outputs/synthetic/seed_<n>/``. They cover random page
+  ``tests/outputs/lettering_bench/synthetic/seed_<n>/``. They cover random page
   layouts, and through them panel aspects from strips to wide panels, casts
   of 1–4, 0–5 lines of 1–16 words within a word budget for the panel's
   share of the page (comic scripts run to about 35 words in a large panel;
@@ -35,7 +36,7 @@ that it generalises rather than fitting this one story's art:
 Every set is re-lettered at the production page size (``assembly.*``
 config), with persisted face matches cleared so attribution runs afresh.
 Prints a table of issue counts by check kind per set, then attribution
-against hand labels (``tests/e2e/fixtures/face_labels.json``, keyed by panel
+against hand labels (``tests/fixtures/face_labels.json``, keyed by panel
 image hash, so only images that were labelled are scored). Each project's
 ``sheet_pages.png`` is rewritten for eyeballing.
 """
@@ -64,15 +65,15 @@ from lazycomics.geometry import resolution_for_aspect  # noqa: E402
 
 from contact_sheet import reletter  # noqa: E402  (sibling script in tools/)
 
-E2E = REPO / "tests" / "e2e"
-TUNE = [E2E / "outputs" / "e2e", E2E / "outputs" / "golden" / "w4_prompts" / "project"]
+TESTS = REPO / "tests"
+TUNE = [TESTS / "outputs" / "e2e", TESTS / "outputs" / "ab_runs" / "w4_prompts" / "project"]
 HOLDOUT = {
-    "2026-06-10_e2e": E2E / "archived_test_outputs" / "2026-06-10_e2e",
-    "2026-10-30_golden_baseline": E2E / "archived_test_outputs" / "2026-10-30_golden_baseline" / "project",
-    "2026-10-30_golden_w3": E2E / "archived_test_outputs" / "2026-10-30_golden_w3" / "project",
+    "2026-06-10_e2e": TESTS / "archive" / "e2e" / "2026-06-10",
+    "2026-10-30_ab_baseline": TESTS / "archive" / "ab_runs" / "2026-10-30_baseline" / "project",
+    "2026-10-30_ab_w3": TESTS / "archive" / "ab_runs" / "2026-10-30_w3" / "project",
 }
-LABELS = E2E / "fixtures" / "face_labels.json"
-OUT = E2E / "outputs"
+LABELS = TESTS / "fixtures" / "face_labels.json"
+OUT = TESTS / "outputs" / "lettering_bench"
 
 # Issue kinds in table order; anything else is appended.
 KINDS = ["overflow", "overlap", "face", "order", "stagger", "tail_size", "tail_cross",

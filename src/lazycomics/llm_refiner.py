@@ -31,7 +31,7 @@ __all__ = ["refine_prompts_with_llm", "DEFAULT_SYSTEM_PROMPT"]
 
 # Per-request timeout. The first request also pays for a local server
 # loading the model from disk, which took over 60s for the first three
-# panels of the 2026-11-01 golden run (gemma4 8B on Ollama), so they were
+# panels of the 2026-11-01 A/B run (gemma4 8B on Ollama), so they were
 # silently left unrefined.
 _TIMEOUT_S = 300
 

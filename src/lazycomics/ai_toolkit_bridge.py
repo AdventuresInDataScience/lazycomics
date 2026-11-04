@@ -350,7 +350,7 @@ def _build_job_config(
                     "cache_text_embeddings": True,
                     "dtype": "bf16",
                     # Samples need the text encoder and minutes each; judge
-                    # the checkpoints with a golden run instead.
+                    # the checkpoints with an A/B run instead.
                     "disable_sampling": True,
                 },
                 "model": {

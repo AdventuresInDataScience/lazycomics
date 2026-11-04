@@ -16,10 +16,10 @@ Prerequisites:
 Run:
     pytest tests/e2e/test_integration_e2e.py -v -s
 
-The project is (re)created in ``tests/e2e/outputs/e2e/`` (gitignored) and
-left there for inspection, e.g. ``python tools/contact_sheet.py
-tests/e2e/outputs/e2e``. Each run replaces it; move a run you want to keep
-into ``tests/e2e/archived_test_outputs/`` first.
+The project is (re)created in ``tests/outputs/e2e/`` (gitignored) and left
+there for inspection, e.g. ``python tools/contact_sheet.py
+tests/outputs/e2e``. Each run replaces it; move a run you want to keep to
+``tests/archive/e2e/<date>/`` first.
 """
 
 from __future__ import annotations
@@ -40,8 +40,8 @@ import lazycomics as lc  # noqa: E402
 from lazycomics import review  # noqa: E402
 from lazycomics.config import load_config  # noqa: E402
 
-FIXTURES = Path(__file__).parent / "fixtures"
-OUTPUT_ROOT = Path(__file__).parent / "outputs"  # shared with golden_run.py and the live tests
+STORY = Path(__file__).parents[1] / "fixtures" / "main_story"
+OUTPUT_ROOT = Path(__file__).parents[1] / "outputs"  # each test and tool has its own folder
 
 
 # ---------------------------------------------------------------------------
@@ -98,17 +98,17 @@ def test_full_pipeline_e2e():
         )
 
     # --- Fresh project with the real story.cbml + registered assets ---
-    # Only this run's own folder is wiped: OUTPUT_ROOT also holds golden runs.
+    # Only this run's own folder is wiped: OUTPUT_ROOT also holds the tools' runs.
     if (OUTPUT_ROOT / "e2e").exists():
         shutil.rmtree(OUTPUT_ROOT / "e2e")
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
-    project = lc.create_project("e2e", FIXTURES / "story.cbml", base_dir=OUTPUT_ROOT)
+    project = lc.create_project("e2e", STORY / "story.cbml", base_dir=OUTPUT_ROOT)
 
     # Register Characters
     for char_name in ["DAVID", "GERALD", "INTERN", "RANJEET", "YUKI"]:
-        txt_path = FIXTURES / f"{char_name}.txt"
-        png_path = FIXTURES / f"{char_name}.png"
+        txt_path = STORY / "characters" / f"{char_name}.txt"
+        png_path = STORY / "characters" / f"{char_name}.png"
         ref_images = [png_path] if png_path.exists() else []
         if txt_path.exists():
             desc = txt_path.read_text().strip()
@@ -120,8 +120,8 @@ def test_full_pipeline_e2e():
 
     # Register Locations
     for loc_name in ["GERALDS_APARTMENT", "THE_BAR", "THE_OFFICE"]:
-        txt_path = FIXTURES / f"{loc_name}.txt"
-        png_path = FIXTURES / f"{loc_name}.png"
+        txt_path = STORY / "locations" / f"{loc_name}.txt"
+        png_path = STORY / "locations" / f"{loc_name}.png"
         ref_images = [png_path] if png_path.exists() else []
         if txt_path.exists():
             desc = txt_path.read_text().strip()
@@ -132,8 +132,8 @@ def test_full_pipeline_e2e():
             )
 
     # Register Style
-    style_txt_path = FIXTURES / "Style.txt"
-    style_png_path = FIXTURES / "Style.png"
+    style_txt_path = STORY / "Style.txt"
+    style_png_path = STORY / "Style.png"
     if style_txt_path.exists():
         desc = style_txt_path.read_text().strip()
         ref_images = [style_png_path] if style_png_path.exists() else []
@@ -238,7 +238,7 @@ def test_full_pipeline_e2e():
     # Lettering survives assembly: no bubble/caption/SFX falls outside the
     # part of its panel the page slot shows, and every drawn tail aims at a
     # detected face. (Quality checks like reading order are reported by
-    # tools/golden_run.py, not asserted here.)
+    # tools/contact_sheet.py, not asserted here.)
     for pid in by_id:
         hard = [i for i in review.check_panel(project, pid)
                 if i.kind in ("slot", "tail_anchor", "record")]

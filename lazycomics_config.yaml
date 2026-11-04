@@ -161,7 +161,7 @@ wan2gp:
   # Normalized Attention Guidance. With guidance_scale inert, NAG is the only
   # way `negative_prompt` (prompts/<id>.neg.txt) reaches Klein, and Wan2GP
   # applies it only above 1. 1.0 = off; Wan2GP's UI allows 1-20.
-  # Left off: in golden A/Bs at 1.5, 2 and 3 (W8, in
+  # Left off: in A/B runs at 1.5, 2 and 3 (W8, in
   # Docs/archive/2026-11-03_PLAN_W7-W8.md) it removed
   # painted-in speech bubbles, but every time it drew the 4-character panel
   # with extra copies of the cast, and from 2 up the style and the

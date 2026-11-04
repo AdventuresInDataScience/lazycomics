@@ -15,8 +15,8 @@ Reads what the pipeline already wrote (it never generates) and writes into
   from every appearance (with ``--baseline``, that run's crop beneath each).
 
 It also prints the per-panel checks from ``lazycomics.review.check_panel``.
-Works on any project, e.g. ``tests/e2e/outputs/e2e`` after a full e2e run;
-``tools/golden_run.py`` calls ``write_sheets`` for the golden subset.
+Works on any project, e.g. ``tests/outputs/e2e`` after a full e2e run;
+``tools/ab_run.py`` calls ``write_sheets`` for each A/B run.
 Needs the project to have been through ``render_text`` and
 ``assemble_pages`` for the layout and slot records.
 

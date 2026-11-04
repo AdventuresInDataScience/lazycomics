@@ -2,7 +2,7 @@
 aspect: us-comic
 author: lazycomics test suite
 genre: steampunk noir
-description: Held-out script for tools/golden_run.py --story and tools/refiner_bench.py. A different cast, setting and style from story.cbml, so prompt and generation changes are checked beyond the story they were tuned on.
+description: Held-out script for tools/ab_run.py --story and tools/refiner_bench.py. A different cast, setting and style from story.cbml, so prompt and generation changes are checked beyond the story they were tuned on.
 
 PAGE preset:grid-2x2
 

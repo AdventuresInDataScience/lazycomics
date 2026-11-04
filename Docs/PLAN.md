@@ -7,7 +7,9 @@ in [`archive/2026-11-02_PLAN_W5-W6.md`](archive/2026-11-02_PLAN_W5-W6.md),
 and W0–W4 in [`archive/2026-11-01_PLAN_W0-W4.md`](archive/2026-11-01_PLAN_W0-W4.md).
 On 2026-11-03 the leftover generation faults became W11 (Refinement) and
 the LoRA work moved from W11 to W12; the archives still call it W11. W9
-closed the same day; its record is in Reference, "Upscaler (from W9)"._
+closed the same day; its record is in Reference, "Upscaler (from W9)".
+On 2026-11-04 `tests/` was reorganised and "golden run" became "A/B run";
+old paths and names map in Reference, "Where runs live"._
 
 **How this doc works.**
 - Status lives only in the two tables below: workstreams, then open
@@ -32,15 +34,15 @@ closed the same day; its record is in Reference, "Upscaler (from W9)"._
 
 | Workstream | Status |
 |---|---|
-| W0–W4 | **Done** 2026-10-30 to 2026-11-01: the generation contract, the verification loop (`tools/golden_run.py`), bubble layout, and character consistency (52/52 appearances on-model in the e2e). Archived. |
+| W0–W4 | **Done** 2026-10-30 to 2026-11-01: the generation contract, the verification loop (`tools/ab_run.py`), bubble layout, and character consistency (52/52 appearances on-model in the e2e). Archived. |
 | W5 Inpaint path | **Closed** 2026-11-02 with nothing built. Its fix (problem 6) is in W12. |
 | W6 LoRA training pipeline | **Done** 2026-11-02: built and unit-tested; Wan2GP loads AI Toolkit's LoRA format (checked on real pixels). No LoRA trained: that's W12. |
 | W7 Lettering | **Done** 2026-11-03 on your read of the re-lettered e2e pages: no overlaps, faces uncovered, tails on every matched speaker, the lettering bench. Archived. |
 | W8 Generation fixes | **Done** 2026-11-03 on your read. Kept: dialogue and SFX as refiner context, rule checks on every refined prompt, the group cue where two or more speak, signage reworded in descriptions, two `story.cbml` edits, the refiner bench and a held-out script. Rejected: NAG, 8 steps. Leftovers moved to W11. Archived. |
 | W9 Upscaling | **Done** 2026-11-03: panels are upscaled 4x before lettering (`realesrgan-x4plus-anime`, ONNX on DirectML, your pick of four), lettered at that size with the layout unchanged, and assembled into 3000px pages for the `.cbz` plus 6000px print pages. Ran in the full e2e (2026-11-03). In Reference, "Upscaler (from W9)". |
 | **e2e sign-off (milestone)** | **Next.** A full e2e run, every stage, meeting W7–W9's done-whens and your review. W9's run (2026-11-03) ran every stage and awaits your read. The gate for W11 and W12. |
-| W10 Tidy-up | Not started. Unused model fields; refinement, golden-run and lettering-bench speed. |
-| W11 Refinement | Not started; after the sign-off and W10. The generation-quality faults moved out of W8: painted bubbles (problem 8), 3 of 4 drawn on the 0.22 strip and `page_2_panel_1`'s residue (problem 16). |
+| W10 Tidy-up | Not started. Unused model fields; refinement, A/B-run and lettering-bench speed. |
+| W11 Refinement | Not started; after the sign-off and W10. The generation-quality faults moved out of W8: painted bubbles (problem 8), 3 of 4 drawn on the 0.22 strip and `page_2_panel_1`'s residue (problem 16). Added 2026-11-04 from your read of the W9 e2e: the Intern drawn as a second Ranjeet (`page_4_panel_3`). |
 | W12 LoRA path | **Parked** until the e2e sign-off and W11: the last workstream, on its own branch. Train and judge one character's LoRA, then fix the inpaint path (problem 6). |
 
 ## Where things stand (2026-11-03)
@@ -48,7 +50,7 @@ closed the same day; its record is in Reference, "Upscaler (from W9)"._
 - **Unit tests:** 477 pass (`pytest tests --ignore=tests/e2e`, ~20s).
 - **Full e2e (2026-11-03, W9):** every stage ran on real Wan2GP + Ollama,
   upscaling included, and W8's code and `story.cbml` edits for the first
-  time. Not signed off: it's in `tests/e2e/outputs/e2e/` for your review.
+  time. Not signed off: it's in `tests/outputs/e2e/` for your review.
   - `story.cbml`, 33 panels → 10 pages (2000×3000, plus 4000×6000 print
     copies) → a 50 MB `.cbz`, in 41:45 on AC: 24.7 min of generation, 97s of
     upscaling, ~15 min for the rest, mostly LLM refinement.
@@ -56,26 +58,30 @@ closed the same day; its record is in Reference, "Upscaler (from W9)"._
     line 1 (the new art's layout, the same at 1x). `page_10_panel_1`:
     Gerald's line has no tail, his face unmatched (fail closed).
   - Consistency not yet scored on this run (`sheet_characters.png`).
-- **Earlier e2e runs**, in `tests/e2e/archived_test_outputs/`:
-  - `2026-11-01_e2e/`: kept as it was generated, the "before" every problem
+  - Your partial read (2026-11-04): `page_3_panel_3`'s gibberish bubble is
+    painted into the art, the known problem 8 (W11); `page_4_panel_3`
+    draws the Intern as a second Ranjeet, now a W11 item.
+- **Earlier e2e runs**, in `tests/archive/e2e/`:
+  - `2026-11-01/`: kept as it was generated, the "before" every problem
     below cites. 41.5 min on AC: 13 min of LLM refinement, 27 min of
     generation. Characters on-model in all 52 appearances where they're
     drawn. Your review found the lettering the weakest part (W7), plus
     faults in the art itself (W8).
-  - `2026-11-02_e2e_w7_relettered/`: the same panels re-lettered by W7,
+  - `2026-11-02_w7_relettered/`: the same panels re-lettered by W7,
     30/33 clean; four speakers with no tail because their face wasn't
     matched (fail closed).
-- **Golden reference** for A/B runs: the golden run `w8_frozen` (12/12 clean
-  on the checks), since W8 changed five frozen prompts. Its frozen prompts
-  are in `tests/e2e/fixtures/golden_prompts/`. The previous reference,
+- **A/B baseline:** the A/B run `w8_frozen` (12/12 clean on the checks),
+  since W8 changed five frozen prompts. Its frozen prompts are in
+  `tests/fixtures/main_story/subset_prompts/`. The previous baseline,
   `w4_prompts`, is what W8's runs were judged against.
 - **W8's regenerated story panels**, from before the 2026-11-03 e2e ran its
   code and the two `story.cbml` edits (`page_2_panel_1`'s background
-  characters, `page_5_panel_1`'s neon), are in `tests/e2e/outputs/golden/`,
+  characters, `page_5_panel_1`'s neon), are in `tests/archive/ab_runs/`,
   each with a `compare.png` (e2e | new raw | new lettered):
-  - `w8_story`: the 7 bar panels, `page_2_panel_1` and `page_7_panel_1`;
-  - `w8_nocue`: the two panels the cue rule changed;
-  - `w8_script`: the two panels the script edits changed.
+  - `2026-11-03_w8_story`: the 7 bar panels, `page_2_panel_1` and
+    `page_7_panel_1`;
+  - `2026-11-03_w8_nocue`: the two panels the cue rule changed;
+  - `2026-11-03_w8_script`: the two panels the script edits changed.
 - **Held-out checks** for lettering, prompts and generation: see Reference,
   "Benches and held-out sets".
 - **Generate on AC power.** On battery the laptop caps the GPU, and large
@@ -88,9 +94,9 @@ Numbers carry over from the archived plans; code and tools cite them.
 
 | # | Problem | Evidence | Cause / lead | Fix in |
 |---|---|---|---|---|
-| 4 | Bubble tail points at the wrong character | Residual after W7 (2 of 30 labelled speakers): e2e `page_10_panel_1` and golden `page_4_panel_1`, the 4-character 0.22 strip. Gerald and Yuki are seen from behind, and David is drawn where the script predicts Ranjeet, so David's tail lands on Ranjeet. | Matching is by predicted position only since W7.2 dropped SFace. Position can't tell a mirrored cast when some of it isn't visible. Fixing it needs an identity signal that works on this art (none known; the colour spike in W7 only exploited this cast's hair and skin). W8's group cue asks for the predicted order: regenerated, story `page_10_panel_1` draws David on the right, where the lettering expects him. Re-check at the sign-off. | Deferred (identity); W8 may help |
+| 4 | Bubble tail points at the wrong character | Residual after W7 (2 of 30 labelled speakers): e2e `page_10_panel_1` and subset `page_4_panel_1`, the 4-character 0.22 strip. Gerald and Yuki are seen from behind, and David is drawn where the script predicts Ranjeet, so David's tail lands on Ranjeet. | Matching is by predicted position only since W7.2 dropped SFace. Position can't tell a mirrored cast when some of it isn't visible. Fixing it needs an identity signal that works on this art (none known; the colour spike in W7 only exploited this cast's hair and skin). W8's group cue asks for the predicted order: regenerated, story `page_10_panel_1` draws David on the right, where the lettering expects him. Re-check at the sign-off. | Deferred (identity); W8 may help |
 | 6 | Inpaint settings never reach Wan2GP | Not exercised since May: `auto` sends LoRA-free panels through a single pass. | Inpaint tasks don't send `settings_version`, so wgp forces `denoising_strength = 1.0`. `masking_strength` 0.3 locks the area outside the mask for only ~2 of 4 steps, and flux2 never pastes the original pixels back. Net effect: the whole panel is regenerated. | W12 |
-| 14 | Face detector misses stylised faces and accepts junk | An earlier golden `page_6_panel_1`: Gerald's grinning face missed, a 0.53-score "face" on the floor accepted. e2e `page_5_panel_1` (three at a bar, no dialogue): no faces found. | Hybrid YuNet + MediaPipe at threshold 0.5. Tails, attribution, face avoidance and the character-sheet crops all inherit it. W7 traced no lettering fault to it. | Deferred |
+| 14 | Face detector misses stylised faces and accepts junk | An earlier A/B run's `page_6_panel_1`: Gerald's grinning face missed, a 0.53-score "face" on the floor accepted. e2e `page_5_panel_1` (three at a bar, no dialogue): no faces found. | Hybrid YuNet + MediaPipe at threshold 0.5. Tails, attribution, face avoidance and the character-sheet crops all inherit it. W7 traced no lettering fault to it. | Deferred |
 
 **Moved to W11, Refinement** (2026-11-03, your call): 8 painted
 bubbles · 16 characters not drawn on the 0.22 strip, `page_2_panel_1`'s
@@ -134,16 +140,17 @@ The gate before any LoRA work: the whole pipeline, every stage, working
 properly.
 
 1. **Full e2e on AC:** `pytest tests/e2e/test_integration_e2e.py -v -s`,
-   then `python tools/contact_sheet.py tests/e2e/outputs/e2e`, then your
+   then `python tools/contact_sheet.py tests/outputs/e2e`, then your
    read of every page. W10.2 (LLM refinement speed) would cut the run's 13 min
    of refinement, if you want it first.
    W9's run (2026-11-03) has done the first two: it and its sheets are in
-   `tests/e2e/outputs/e2e/`, so what's left is your read, unless something
+   `tests/outputs/e2e/`, so what's left is your read, unless something
    changes first. Read `pages/` (the `.cbz`) and spot-check `pages_print/`.
-2. **Keep it.** Move the signed-off run into
-   `tests/e2e/archived_test_outputs/<date>_e2e_signoff/`. W8 already
-   replaced `w4_prompts` with `w8_frozen` as the A/B reference; replace it
-   again only if something later changes the golden output.
+   Pages 3 and 4 read so far (2026-11-04): both faults went to W11.
+2. **Keep it.** Move the signed-off run to
+   `tests/archive/e2e/<date>_signoff/`. W8 already replaced `w4_prompts`
+   with `w8_frozen` as the A/B baseline; replace it again only if something
+   later changes the subset's output.
 
 **Done when:**
 - every stage ran, upscaling included, and the `.cbz` opens in a viewer;
@@ -162,9 +169,9 @@ properly.
 2. **LLM refinement speed.** 33 prompts took 13 min (~25s each), with Ollama
    loading gemma4 at a 128k context. Try a smaller context on the Ollama
    server (e.g. `OLLAMA_CONTEXT_LENGTH`).
-3. **Golden-run speed.** It takes 582s against W2's 8-minute target. The
+3. **A/B-run speed.** It takes 582s against W2's 8-minute target. The
    lever is fewer refs, since each costs about one output image of tokens
-   (golden A/B, consistency bar must hold):
+   (A/B against `w8_frozen`, consistency bar must hold):
    - `--set refs.characters_first=true --set refs.closeup_location=false`;
    - then `--set refs.max_refs=N`.
 
@@ -179,13 +186,14 @@ properly.
 
 The generation-quality faults you moved out of W8 so it could close
 (2026-11-03), to revisit once the pipeline is signed off. They don't block
-the sign-off. Judge each fix as W8 did: a golden or story A/B on AC power,
-then the held-out script (Reference, "Benches and held-out sets").
+the sign-off. Judge each fix as W8 did: an A/B run of the subset or the
+story on AC power, then the held-out script (Reference, "Benches and
+held-out sets").
 
 **Done when:** each item below is fixed on real pixels, or you've moved it
 to "left as is".
 
-- **3 of 4 characters drawn on the 0.22 strip** (from problem 16). Golden
+- **3 of 4 characters drawn on the 0.22 strip** (from problem 16). Subset
   `page_4_panel_1`, which is story `page_10_panel_1`, draws 3 of 4 in every
   run since W8 (2 of 4 before; Ranjeet is the one dropped).
   - The group cue names all four, left to right. No prompt lever is known
@@ -197,10 +205,15 @@ to "left as is".
 - **Speech bubbles and text painted into the art** (problem 8). The image
   model draws its own bubbles, blank or with gibberish, which the lettering
   can't move or remove.
-  - Where they still are: 2 of 12 golden panels in `w8_frozen`
+  - Where they still are: 2 of 12 subset panels in `w8_frozen`
     (`page_1_panel_1`, small, above a background worker; `page_1_panel_3`,
     "MEMK." above Ranjeet), and 1 of 12 in a fresh refined run
     (`w8_refined`).
+  - Subset `page_1_panel_3` is story `page_3_panel_3` (Ranjeet scrolling
+    memes), which has a painted bubble in every run of it checked: the June,
+    2026-11-01 and 2026-11-03 e2e runs, and `w4_prompts`, `w8_frozen` and
+    `w8_refined`. Same seed and near-identical prompts give the same
+    composition, so it recurs rather than being bad luck.
   - The e2e's `page_8_panel_2` had two ("!!/", "ちっ!"), gone with W8's
     prompts.
   - Props invite text too: story `page_7_panel_1`'s investigation board was
@@ -210,7 +223,33 @@ to "left as is".
     - reword actions and props that invite text ("scrolls memes" on
       `page_1_panel_3`, boards of notes, letters), as rewording did for
       signs;
+    - the style reference (`main_story/Style.png`) is itself a comic panel
+      with three lettered speech bubbles, and it goes into all 33 panels'
+      refs. Untested (found 2026-11-04): A/B the subset with a bubble-free
+      style image;
     - detect a painted bubble and reroll the seed.
+- **The Intern drawn as a second Ranjeet** (story `page_4_panel_3`; your
+  read, 2026-11-04). Script: `chars: GERALD, YUKI, RANJEET, INTERN`, and
+  "Gerald appears beside the intern with supernatural speed carrying a first
+  aid kit".
+  - 2026-11-03 e2e: four people, but the fourth, in the Intern's slot, wears
+    Ranjeet's outfit (white shirt, rolled sleeves, dark trousers) and has
+    his face without the stubble. The lettering is right for the slot: the
+    Intern's tail points at the double.
+  - 2026-11-01 e2e (before W8's group cue): three people, no Intern at all.
+    The cue ("four people, left to right: …, each clearly visible") is the
+    likely reason a fourth person now appears. A pixel A/B hasn't isolated
+    it.
+  - Leads, untested:
+    - `INTERN.txt` is the only cast description with no age band, hair,
+      skin or outfit colour (the consistency bar's rule), and the Intern has
+      no reference image (left as is, 2026-11-02). Of the four, only he has
+      neither, so the model may borrow a referenced character's look. A
+      fuller description is the cheapest A/B and keeps him text-only;
+    - Ranjeet is in `chars:` but the action never places him, the
+      `page_2_panel_1` lesson;
+    - the action puts Gerald beside the Intern, but the cue orders Gerald
+      first and the Intern last, at opposite ends.
 - **Story `page_2_panel_1`'s residue** (problem 16).
   - After the `story.cbml` edit placing Yuki, Ranjeet and David in the
     background, it's no longer a line-up (`w8_script`). But the panic the
@@ -247,7 +286,7 @@ Reference, "AI Toolkit with Klein".
   Toolkit's own network code loaded in Wan2GP through the bridge with no key
   or shape errors; ×0 matched no LoRA pixel for pixel, ×1.0 changed the
   output. AI Toolkit's own parser accepts the job file the bridge writes.
-- **GERALD's training set** is generated (golden run `w6_gerald`, 20 images
+- **GERALD's training set** is generated (A/B run `w6_gerald`, 20 images
   plus the reference, 8.5 min on AC). All 20 are on-model. Reject
   candidates: `_15` (grey-blue skin), `_13` (a stray mark). The generated
   Gerald is drawn more realistically than the reference, and that is the
@@ -261,14 +300,14 @@ Reference, "AI Toolkit with Klein".
    loads it), or `hf auth login`. The first run downloads ~34 GB: the
    18 GB transformer plus Qwen3-8B.
 2. **You:** hand-pick GERALD's set from
-   `tests/e2e/outputs/golden/w6_gerald/project/assets/characters/GERALD/lora_dataset_sheet.png`.
+   `tests/outputs/ab_runs/w6_gerald/project/assets/characters/GERALD/lora_dataset_sheet.png`.
 3. **Trial run**, to measure VRAM and time per step and confirm a trained
    LoRA loads: `python tools/train_lora.py train
-   tests/e2e/outputs/golden/w6_gerald/project GERALD --set
+   tests/outputs/ab_runs/w6_gerald/project GERALD --set
    ai_toolkit.steps=100`. If it runs out of memory, drop 1024 from
    `ai_toolkit.resolutions` first, then try `layer_offloading: true`.
 4. **Full run and judge it.** The same command with `--force` (2000 steps),
-   then `golden_run.py --lora GERALD=<path> --set
+   then `ab_run.py --lora GERALD=<path> --set
    enricher.multi_char_strategy=single --baseline w8_frozen`.
    - Judge on solo panels. Under `single` the LoRA applies to the whole
      panel, so other characters in it may pick up Gerald's look; under
@@ -293,14 +332,14 @@ Reference, "AI Toolkit with Klein".
 **Done when:**
 - one character's LoRA trains in a documented time and is registered with
   `set_lora`;
-- a golden run with it is at least as consistent as `w8_frozen`
+- an A/B run with it is at least as consistent as `w8_frozen`
   (Reference, "Consistency bar");
 - a 2-character panel with that LoRA comes out of the inpaint path without
   the "two disjointed halves" seam.
 
 ### Deferred (no consumer, or not worth it yet)
 
-- Stay-resident Wan2GP worker (old §14.10). Reconsider if golden iterations
+- Stay-resident Wan2GP worker (old §14.10). Reconsider if A/B iterations
   stay slow after W10.3.
 - SAM segmentation (old §14.7).
 - Comic-tuned face detector (old §14.2): problem 14. W7 traced no lettering
@@ -335,7 +374,7 @@ in ≥90% of crops without reading the dialogue.
   verbatim.
 
 Gerald's original "young pale white male" with no hair colour came out
-white-haired in 2 of 7 golden panels.
+white-haired in 2 of 7 subset panels.
 
 ### Prompt rules (from W4 and W8)
 
@@ -354,7 +393,7 @@ checks it.
 | Rule | Evidence | Built by | Checked by |
 |---|---|---|---|
 | Each character's description verbatim, labelled `Name (…)` | It's how the model tells the cast apart (W4: no hair colour gave a white-haired Gerald). Kept in 145 of 145 refined prompts on disk. | `_char_to_prompt_text` | `_rule_breaks` `description` |
-| Group cue, "N people, left to right: …, each clearly visible", in `chars:` order, on panels with 3+ characters of whom 2+ speak | Draws the cast in the order the tails assume: golden `page_4_panel_1` 2 → 3 of 4, held-out cue panels in order. Doesn't stop a crowd shot posing in a row (problem 16). | `group_cue` | `_rule_breaks` `cue` |
+| Group cue, "N people, left to right: …, each clearly visible", in `chars:` order, on panels with 3+ characters of whom 2+ speak | Draws the cast in the order the tails assume: subset `page_4_panel_1` 2 → 3 of 4, held-out cue panels in order. Doesn't stop a crowd shot posing in a row (problem 16). | `group_cue` | `_rule_breaks` `cue` |
 | The cue first in the prompt | Asked for by the system prompt; no evidence it matters. `page_2_panel_1` lined up with the cue first and with it last. | system prompt only | not checked (the refiner bench counts it: 3 of 7) |
 | Dialogue and SFX never quoted | Quoted text gets painted (problem 8): "removing his office tie (KRRK)". | inline reminder in the context | `_rule_breaks` `quoted` |
 | Dialogue and SFX shown as action | David writes under SCRIBBLE; shouted lines give shouting faces; a hand on the door under KNOCK KNOCK. | `_format_context`, inline | can't be checked |
@@ -444,7 +483,7 @@ The SFX outline is now a font stroke rather than 12 offset copies, so it
 stays solid at 4x.
 
 **The comparison** (2026-11-03): 4 e2e panels on AC power, RTX 3080 Laptop,
-DirectML. The sheets are in `tests/e2e/outputs/upscale_compare/`, shown at
+DirectML. The sheets are in `tests/outputs/reviews/upscale_compare/`, shown at
 the panels' print and screen sizes. Fidelity is the PSNR of each output
 shrunk back to the original: how much colour and content it keeps.
 
@@ -477,19 +516,19 @@ W7–W8 archive.
     bubble type, captions, SFX and face sizes.
   
   It also scores attribution against hand labels
-  (`tests/e2e/fixtures/face_labels.json`, 20 labelled panels keyed by image
+  (`tests/fixtures/face_labels.json`, 20 labelled panels keyed by image
   hash).
 - **Refiner bench** (`tools/refiner_bench.py`, ~9 min, LLM only). It refines
   a seeded synthetic script (its own cast, places, actions, dialogue and
   SFX) and the held-out script. It scores each first reply against
   `_rule_breaks` (Reference, "Prompt rules"), and counts retries and
   fallbacks to the original.
-- **Held-out script** (`tests/e2e/fixtures/holdout_story/`, 7 panels).
+- **Held-out script** (`tests/fixtures/holdout_story/`, 7 panels).
   - Nova and Rex use the June fixture's refs; Marlo has none. The setting
     is a steampunk alley and a clock workshop, in a noir style.
   - It covers both cue cases, a no-dialogue group panel, SFX and a shout
     that imply actions, and a prop that invites text.
-  - Run it with `golden_run.py --story tests/e2e/fixtures/holdout_story
+  - Run it with `ab_run.py --story tests/fixtures/holdout_story
     --refine --force --out <name>` (~8 min on AC).
 
 ### Verifying a change
@@ -498,12 +537,12 @@ W7–W8 archive.
 |---|---|---|
 | Text rendering / bubble layout | `python tools/lettering_bench.py --sets tune` while working, then the full `python tools/lettering_bench.py` (tune, holdout, synthetic; see "Benches and held-out sets") before keeping it. `python tools/contact_sheet.py <project> --reletter` re-letters any one project | ~70s / ~2.5 min (the e2e is lettered at 4x since W9: W10.4) |
 | The upscaler (model, tiling) or print pages | On a copy of the e2e project: `lc.upscale_panels(project, force=True)`, `lc.render_text(project, force=True)`, `lc.assemble_pages(project, force=True)`. The layout records must not change; compare crops of `pages/` and `pages_print/` with the e2e's | ~3 min |
-| Anything upstream of generation (bridge, refs, `refs`/`wan2gp` config) | `python tools/golden_run.py --force --out <name> --baseline w8_frozen [--set KEY=VALUE ...]` | ~10 min on AC (582s measured); ~23 min on battery |
-| Character descriptions, the prompt template or the refiner | `python tools/refiner_bench.py` (LLM only) while working. Then the golden run with `--refine`, and the held-out script: `python tools/golden_run.py --story tests/e2e/fixtures/holdout_story --refine --force --out <name>`. Freeze `tests/e2e/outputs/golden/<name>/project/prompts/*.txt` into `tests/e2e/fixtures/golden_prompts/` if it wins | ~9 min / + ~1 min / ~8 min |
-| A character LoRA (training settings, its training set) | `python tools/train_lora.py train <project> <ID> --force`, then a golden run with `--lora <ID>=<path>` (W12, step 4) | training: unmeasured; + ~10 min |
-| Before a release / after contract changes | `python tests/e2e/test_wan2gp_live_queue.py` (2-panel smoke test, minutes), then `pytest tests/e2e/test_integration_e2e.py -v -s` (replaces `tests/e2e/outputs/e2e/`) | ~40 min on AC |
+| Anything upstream of generation (bridge, refs, `refs`/`wan2gp` config) | `python tools/ab_run.py --force --out <name> --baseline w8_frozen [--set KEY=VALUE ...]` | ~10 min on AC (582s measured); ~23 min on battery |
+| Character descriptions, the prompt template or the refiner | `python tools/refiner_bench.py` (LLM only) while working. Then an A/B run with `--refine`, and the held-out script: `python tools/ab_run.py --story tests/fixtures/holdout_story --refine --force --out <name>`. Freeze `tests/outputs/ab_runs/<name>/project/prompts/*.txt` into `tests/fixtures/main_story/subset_prompts/` if it wins | ~9 min / + ~1 min / ~8 min |
+| A character LoRA (training settings, its training set) | `python tools/train_lora.py train <project> <ID> --force`, then an A/B run with `--lora <ID>=<path>` (W12, step 4) | training: unmeasured; + ~10 min |
+| Before a release / after contract changes | `python tests/smoke/two_panels.py` (2-panel smoke test, minutes), then `pytest tests/e2e/test_integration_e2e.py -v -s` (replaces `tests/outputs/e2e/`) | ~40 min on AC |
 
-`golden_run.py` writes `report.txt` (`review.check_panel`: aspect, text cut
+`ab_run.py` writes `report.txt` (`review.check_panel`: aspect, text cut
 off by the slot, reading order, overlaps, faces covered, tails),
 `sheet_pages.png` and `sheet_characters.png`. `tools/contact_sheet.py
 <project_dir> [--baseline <project_dir>]` writes the same sheets and checks
@@ -512,27 +551,41 @@ for any already-rendered project, e.g. after a full e2e run.
   that.
 - Panels are kept between runs, so pass `--force` whenever generation inputs
   change, or stale panels get reviewed.
-- The subset, and why each page is in it: `GOLDEN_PAGES` in the tool.
+- The subset, and why each page is in it: `SUBSET_PAGES` in the tool.
 
-**Where runs live.** The layout is in the README's "Development" section.
-Everything is under `tests/e2e/`, and run folders are gitignored:
-- the inputs are in `fixtures/`;
-- live runs go to `outputs/`: `e2e/`, `golden/<name>/`, `live/`,
-  `live_queue/`, the lettering bench's `holdout/` and `synthetic/`, and
-  `refiner_bench/`;
-- old runs kept on purpose go to `archived_test_outputs/`, date-prefixed.
+**Where runs live.** The tree is in the README's "Development" section.
+Since 2026-11-04 `tests/e2e/` holds the end-to-end test and nothing else:
+- inputs are in `tests/fixtures/` (tracked): `main_story/` (the test comic,
+  its subset and frozen prompts), `holdout_story/`, `face_labels.json`;
+- what each test or tool writes goes to its own folder in `tests/outputs/`:
+  `e2e/`, `smoke/`, `ab_runs/<name>/`, `lettering_bench/`, `refiner_bench/`,
+  and `reviews/<name>/` for one-off comparison sheets;
+- runs kept on purpose go to `tests/archive/`, in the same layout:
+  `e2e/<date>[_label]/`, `ab_runs/<date>_<name>/`. Both are gitignored.
 
-`golden_run.py` takes a bare run name for `--out`/`--baseline` (a folder in
-`outputs/golden/`), or a path. Run names in the archived plans, by current
-location:
+`ab_run.py` takes a bare run name for `--out`/`--baseline` (a folder in
+`tests/outputs/ab_runs/`), or a path. `tests/outputs/ab_runs/` keeps only
+the runs still in use: `w8_frozen` (the A/B baseline), `w4_prompts` (the
+lettering bench's tune set), `w6_gerald` (W12's training set) and
+`holdout_story` (the latest held-out run). W8's other runs moved to the
+archive. Names and paths in the archived plans, by current location:
 
-| Archived name | Now |
+| In the archived plans | Now |
 |---|---|
-| `golden_w4_prompts/` | golden run `w4_prompts` (the A/B reference until W8; now `w8_frozen`) |
-| `golden_output/` (2026-10-30 baseline) | `archived_test_outputs/2026-10-30_golden_baseline/` |
-| `golden_w3/` (W4 rung 1) | `archived_test_outputs/2026-10-30_golden_w3/` |
-| `test_e2e_output/` (June e2e run) | `archived_test_outputs/2026-06-10_e2e/` |
-| `tests/fixtures/integration/` | `tests/e2e/fixtures/` |
+| golden run, golden subset, `tools/golden_run.py`, `GOLDEN_PAGES` | A/B run, the subset, `tools/ab_run.py`, `SUBSET_PAGES` |
+| golden run `<name>` (`tests/e2e/outputs/golden/<name>/`) | `tests/outputs/ab_runs/<name>/` for the four above; W8's others in `tests/archive/ab_runs/<date>_<name>/` (e.g. `w8_nag2` → `2026-11-02_w8_nag2`) |
+| `golden_w4_prompts/` | A/B run `w4_prompts` (the baseline until W8; now `w8_frozen`) |
+| `golden_output/` (2026-10-30 baseline), later `archived_test_outputs/2026-10-30_golden_baseline/` | `tests/archive/ab_runs/2026-10-30_baseline/` |
+| `golden_w3/` (W4 rung 1), later `archived_test_outputs/2026-10-30_golden_w3/` | `tests/archive/ab_runs/2026-10-30_w3/` |
+| `test_e2e_output/` (June e2e run), later `archived_test_outputs/2026-06-10_e2e/` | `tests/archive/e2e/2026-06-10/` |
+| `archived_test_outputs/2026-11-01_e2e/`, `…/2026-11-02_e2e_w7_relettered/` | `tests/archive/e2e/2026-11-01/`, `…/2026-11-02_w7_relettered/` |
+| `tests/e2e/outputs/e2e/` | `tests/outputs/e2e/` |
+| `tests/fixtures/integration/`, later `tests/e2e/fixtures/` | `tests/fixtures/main_story/` (cast in `characters/` and `locations/`); `holdout_story/` and `face_labels.json` beside it |
+| `golden.cbml`, `golden_prompts/` | `tests/fixtures/main_story/subset.cbml`, `…/subset_prompts/` |
+| `tests/e2e/fixtures/old/` (the June fixture) | Removed 2026-11-04: unused, and 4 of its 6 files are in `holdout_story/`. In git at `db76456`. |
+| the lettering bench's `outputs/holdout/`, `outputs/synthetic/` | `tests/outputs/lettering_bench/holdout/`, `…/synthetic/` |
+| `tests/e2e/test_wan2gp_live.py`, `…_live_queue.py`; `outputs/live/`, `outputs/live_queue/` | `tests/smoke/one_panel.py`, `two_panels.py`; `tests/outputs/smoke/` |
+| `outputs/upscale_compare/` | `tests/outputs/reviews/upscale_compare/` |
 
 **Panel settings.** Each generated panel carries the settings wgp actually
 ran with, as JSON (`num_inference_steps`, `NAG_scale`, `resolution`, `seed`,
@@ -540,7 +593,7 @@ per-panel `generation_time`, …). Read them to confirm a `--set` reached wgp,
 or to time panels individually:
 - panels generated since 2026-11-01 (real PNGs):
   `json.loads(Image.open(p).text["comment"])`;
-- older panels (JPEG bytes named `.png`, e.g. golden run `w4_prompts`):
+- older panels (JPEG bytes named `.png`, e.g. A/B run `w4_prompts`):
   `json.loads(Image.open(p).getexif().get_ifd(0x8769)[37510][8:])`. The
   first 8 bytes are the `ASCII\0\0\0` charset tag.
 
@@ -609,5 +662,5 @@ Directories: `enriched/` → `prompts/` → `refs_prepared/` → `panels/` →
   (enricher): route single-pass vs inpaint. `auto` picks single-pass unless a
   character has a LoRA.
 - **Projects store absolute asset paths** in `enriched/*.json`. Moving a
-  project means re-running `enrich` (golden runs do) or rewriting the old
+  project means re-running `enrich` (A/B runs do) or rewriting the old
   path prefix.

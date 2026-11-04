@@ -14,17 +14,16 @@ Usage::
 * ``train`` runs AI Toolkit on what's left (``lazycomics.train_character_lora``)
   and attaches the LoRA to the character, with its ID as the trigger word.
   An existing LoRA is reattached, not retrained, unless ``--force``.
-* ``--set`` overrides any config value, as in ``golden_run.py``, e.g.
+* ``--set`` overrides any config value, as in ``ab_run.py``, e.g.
   ``--set ai_toolkit.steps=300`` for a short trial run.
 
-Works on any project. For a golden A/B, train in the golden run's own
-project, then hand the LoRA to the run (every golden run re-registers its
-characters)::
+Works on any project. For an A/B, train in the A/B run's own project, then
+hand the LoRA to the run (every A/B run re-registers its characters)::
 
-    python tools/golden_run.py --out w6_gerald --no-generate     # creates the project
-    python tools/train_lora.py dataset tests/e2e/outputs/golden/w6_gerald/project GERALD
-    python tools/train_lora.py train   tests/e2e/outputs/golden/w6_gerald/project GERALD
-    python tools/golden_run.py --out w6_gerald --force --baseline w4_prompts \\
+    python tools/ab_run.py --out w6_gerald --no-generate     # creates the project
+    python tools/train_lora.py dataset tests/outputs/ab_runs/w6_gerald/project GERALD
+    python tools/train_lora.py train   tests/outputs/ab_runs/w6_gerald/project GERALD
+    python tools/ab_run.py --out w6_gerald --force --baseline w4_prompts \\
         --lora GERALD=<path printed by train> --set enricher.multi_char_strategy=single
 """
 
@@ -43,7 +42,7 @@ import lazycomics as lc  # noqa: E402
 from lazycomics import review  # noqa: E402
 from lazycomics.config import load_config  # noqa: E402
 
-from golden_run import _override  # noqa: E402  (sibling script in tools/)
+from ab_run import _override  # noqa: E402  (sibling script in tools/)
 
 
 def main(argv: list[str] | None = None) -> int:

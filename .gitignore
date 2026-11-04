@@ -217,6 +217,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Real-pipeline runs (tests/e2e/): live outputs, and old runs kept on purpose.
-tests/e2e/outputs/
-tests/e2e/archived_test_outputs/
+# What tests and tools write: the latest run of each, and old runs kept on purpose.
+tests/outputs/
+tests/archive/

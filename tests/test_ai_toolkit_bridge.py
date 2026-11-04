@@ -272,7 +272,7 @@ def test_train_skips_an_existing_lora_but_reattaches_it(env):
     _fill_dataset(env, 12)
     env.lora_path().parent.mkdir(parents=True)
     env.lora_path().write_bytes(b"trained earlier")
-    # Re-registering (as every golden run does) resets meta.json's LoRA.
+    # Re-registering (as every A/B run does) resets meta.json's LoRA.
     register_character(env.project, "GERALD", description=DESC, reference_images=[env.ref])
 
     with mock.patch("lazycomics.ai_toolkit_bridge.subprocess.run") as run:

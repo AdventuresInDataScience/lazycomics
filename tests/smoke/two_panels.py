@@ -2,10 +2,10 @@
 
 Usage (from the repo root, with your lazycomics venv active):
 
-    python tests/e2e/test_wan2gp_live_queue.py
+    python tests/smoke/two_panels.py
 
 What it does:
-    1. Creates a throwaway project in tests/e2e/outputs/live_queue/
+    1. Creates a throwaway project in tests/outputs/smoke/two_panels/
     2. Writes TWO enriched panel JSONs + TWO prompt text files
     3. Calls generate_panels() against your real Pinokio Wan2GP
     4. Prints the output paths so you can visually inspect the PNGs
@@ -32,7 +32,7 @@ from lazycomics.wan2gp_bridge import generate_panels
 
 
 def main():
-    output_root = Path(__file__).parent / "outputs" / "live_queue"
+    output_root = Path(__file__).parents[1] / "outputs" / "smoke" / "two_panels"
 
     # Clean previous run
     if output_root.exists():
@@ -53,7 +53,7 @@ def main():
         "> A test panel 2.\n"
     )
 
-    project = create_project("live_queue_test", cbml_path, base_dir=output_root)
+    project = create_project("project", cbml_path, base_dir=output_root)
 
     # Write enriched JSON for panel 1
     enriched_1 = {

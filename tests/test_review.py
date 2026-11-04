@@ -1,4 +1,4 @@
-"""Tests for lazycomics.review — golden-subset checks and contact sheets.
+"""Tests for lazycomics.review — run checks and contact sheets.
 
 Checks are driven by hand-written layout / slot records (the shapes
 ``text_renderer`` and ``assembler`` write), so each failure mode is pinned
@@ -202,7 +202,7 @@ def test_overlaps_flagged(env):
 
 @_with_env
 def test_corner_touch_not_flagged_as_overlap(env):
-    # Golden run 2026-10-30, page_10_panel_1: rects meet in a 4x7px corner
+    # A/B run 2026-10-30, page_10_panel_1: rects meet in a 4x7px corner
     # where the rounded bubbles don't visibly touch.
     env.panel(P, 224, 1024, aspect=0.22, layout={"bubbles": [
         _bubble(0, [113, 315, 204, 375], tail=False, type_="shout"),

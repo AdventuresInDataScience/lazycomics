@@ -14,7 +14,7 @@ server (``llm.*`` config) but not Wan2GP:
   own cast and descriptions, locations, actions, shots, dialogue of every
   bubble type and SFX, none taken from the e2e story. Casts of 1–4, so some
   panels get the group cue and some three-character panels don't.
-* ``holdout``: ``tests/e2e/fixtures/holdout_story/``, a short hand-written
+* ``holdout``: ``tests/fixtures/holdout_story/``, a short hand-written
   script with a different cast, setting and style.
 
 Each set runs ``enrich`` → ``build_prompts`` → ``refine_prompts_with_llm``.
@@ -24,7 +24,7 @@ broken first time, how often the retry fixes it, and how often the original
 prompt is kept. It also counts how often a refined prompt starts with the
 group cue, which the system prompt asks for but nothing checks. Each panel's
 built prompt, first reply and final prompt go to
-``tests/e2e/outputs/refiner_bench/<set>.txt``. About 23s a panel with
+``tests/outputs/refiner_bench/<set>.txt``. About 23s a panel with
 gemma4 8B on Ollama, so ~9 min for both sets; run from the repo root so the
 config is found.
 """
@@ -49,10 +49,10 @@ from lazycomics import llm_refiner, review  # noqa: E402
 from lazycomics.config import cfg_get, load_config  # noqa: E402
 from lazycomics.prompt_builder import group_cue  # noqa: E402
 
-from golden_run import register_story_assets  # noqa: E402  (sibling script in tools/)
+from ab_run import register_story_assets  # noqa: E402  (sibling script in tools/)
 
-HOLDOUT_STORY = REPO / "tests" / "e2e" / "fixtures" / "holdout_story"
-OUT = REPO / "tests" / "e2e" / "outputs" / "refiner_bench"
+HOLDOUT_STORY = REPO / "tests" / "fixtures" / "holdout_story"
+OUT = REPO / "tests" / "outputs" / "refiner_bench"
 
 # Table rows, in order.
 ROWS = ["panels", "clean first time", "  quoted", "  cue", "  description", "  signage",

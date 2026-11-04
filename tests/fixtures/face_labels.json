@@ -238,7 +238,7 @@
   }
  },
  "ec8aee36bede78d1697383e4c7bb6f2849b9fe5a": {
-  "panel": "golden run w4_prompts, page_1_panel_1",
+  "panel": "A/B run w4_prompts, page_1_panel_1",
   "who": {
    "GERALD": [
     255,
@@ -255,7 +255,7 @@
   }
  },
  "3ba778eb3ec0402af6013dc3c2072dc223806f21": {
-  "panel": "golden run w4_prompts, page_2_panel_1",
+  "panel": "A/B run w4_prompts, page_2_panel_1",
   "who": {
    "GERALD": [
     299,
@@ -272,7 +272,7 @@
   }
  },
  "7a7ab1753940c85f2e2aba48a598fb40f7c4b8b7": {
-  "panel": "golden run w4_prompts, page_2_panel_2",
+  "panel": "A/B run w4_prompts, page_2_panel_2",
   "who": {
    "GERALD": [
     173,
@@ -295,7 +295,7 @@
   }
  },
  "36680bdeed532a333370ee3202b735751d047a64": {
-  "panel": "golden run w4_prompts, page_2_panel_4",
+  "panel": "A/B run w4_prompts, page_2_panel_4",
   "who": {
    "GERALD": [
     157,
@@ -324,7 +324,7 @@
   }
  },
  "86c8a7e891c2c4622bb54bc4f65d92d29fb8ed05": {
-  "panel": "golden run w4_prompts, page_4_panel_1",
+  "panel": "A/B run w4_prompts, page_4_panel_1",
   "who": {
    "DAVID": [
     39,
@@ -341,7 +341,7 @@
   }
  },
  "cdc6020a728aeb88ced465b29775eacbf0a267e2": {
-  "panel": "golden run w4_prompts, page_4_panel_3",
+  "panel": "A/B run w4_prompts, page_4_panel_3",
   "who": {
    "GERALD": [
     54,

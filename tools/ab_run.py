@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""CLI: regenerate the golden subset and write its contact sheets.
+"""CLI: A/B run — regenerate the story subset and write its contact sheets.
 
 Usage::
 
-    python tools/golden_run.py [--out NAME] [--force] [--no-generate]
-                               [--base-resolution N] [--baseline NAME]
-                               [--fresh-prompts | --refine] [--set KEY=VALUE ...]
-                               [--lora CHARACTER=PATH ...] [--story DIR]
+    python tools/ab_run.py [--out NAME] [--force] [--no-generate]
+                           [--base-resolution N] [--baseline NAME]
+                           [--fresh-prompts | --refine] [--set KEY=VALUE ...]
+                           [--lora CHARACTER=PATH ...] [--story DIR]
 
-The golden subset is ``tests/e2e/fixtures/golden.cbml``: three page blocks
-cut from the e2e story (see ``GOLDEN_PAGES``) with the story's registered
-characters, locations and style. One command runs
+The subset is ``tests/fixtures/main_story/subset.cbml``: three page blocks
+cut from the e2e story (see ``SUBSET_PAGES``) with the story's characters,
+locations and style. One command runs
 enrich -> prompts -> refs -> generate -> render_text -> assemble_pages and
-writes into the run folder ``tests/e2e/outputs/golden/<NAME>/`` (default
+writes into the run folder ``tests/outputs/ab_runs/<NAME>/`` (default
 ``latest``; ``--out`` also takes a path):
 
 * ``report.txt``: per-panel checks (``lazycomics.review.check_panel``:
@@ -29,15 +29,15 @@ Iterating:
   stale panels are reused.
 * ``--no-generate`` never starts Wan2GP: re-letter, re-assemble, re-check.
 * Prompts are the frozen LLM-refined set in
-  ``tests/e2e/fixtures/golden_prompts/``, and the seed is fixed by config,
-  so two runs differ only by what you changed. ``--fresh-prompts`` uses
-  ``build_prompts`` output instead; ``--refine`` also runs it through the
-  LLM refiner, as the full pipeline does. LLM output varies run to run, so
-  to A/B anything else against refined prompts, freeze them first: copy
-  ``<run folder>/project/prompts/*.txt`` over ``golden_prompts/``.
+  ``tests/fixtures/main_story/subset_prompts/``, and the seed is fixed by
+  config, so two runs differ only by what you changed. ``--fresh-prompts``
+  uses ``build_prompts`` output instead; ``--refine`` also runs it through
+  the LLM refiner, as the full pipeline does. LLM output varies run to run,
+  so to A/B anything else against refined prompts, freeze them first: copy
+  ``<run folder>/project/prompts/*.txt`` over ``subset_prompts/``.
 * ``--baseline NAME`` (another run's name, or a path such as an archived run
-  in ``tests/e2e/archived_test_outputs/``) adds that run's lettered panels as
-  a column, and its character crops under this run's, for A/B review.
+  in ``tests/archive/ab_runs/``) adds that run's lettered panels as a
+  column, and its character crops under this run's, for A/B review.
 * ``--set KEY=VALUE`` overrides any config value for this run, e.g.
   ``--set wan2gp.default_steps=8`` (repeatable; values parse as YAML).
   ``--base-resolution N`` is shorthand for ``--set wan2gp.base_resolution=N``
@@ -50,13 +50,13 @@ Iterating:
   panels go down the inpaint path, whose settings don't reach Wan2GP yet
   (Docs/PLAN.md problem 6): add ``--set enricher.multi_char_strategy=single``
   or judge solo panels only.
-* ``--story DIR`` runs another script instead of the golden subset, e.g.
-  ``tests/e2e/fixtures/holdout_story``: a script with its own cast and
-  setting, to check that a generation change holds beyond the e2e story.
-  ``DIR`` holds ``story.cbml``, ``Style.txt`` (+ ``Style.png``) and
-  ``characters/<ID>.txt`` / ``locations/<ID>.txt``, each with an optional
-  ``<ID>.png`` reference. It has no frozen prompts, so it needs
-  ``--fresh-prompts`` or ``--refine``.
+* ``--story DIR`` runs another script instead of the subset, e.g.
+  ``tests/fixtures/holdout_story``: a script with its own cast and setting,
+  to check that a generation change holds beyond the e2e story. ``DIR`` is
+  laid out like ``main_story/``: ``story.cbml``, ``Style.txt``
+  (+ ``Style.png``) and ``characters/<ID>.txt`` / ``locations/<ID>.txt``,
+  each with an optional ``<ID>.png`` reference. It has no frozen prompts, so
+  it needs ``--fresh-prompts`` or ``--refine``.
 """
 
 from __future__ import annotations
@@ -80,14 +80,14 @@ from lazycomics.config import cfg_get, load_config  # noqa: E402
 
 from contact_sheet import reletter, write_sheets  # noqa: E402  (sibling script in tools/)
 
-FIXTURES = REPO / "tests" / "e2e" / "fixtures"
-GOLDEN_CBML = FIXTURES / "golden.cbml"
-FROZEN_PROMPTS = FIXTURES / "golden_prompts"
-RUNS = REPO / "tests" / "e2e" / "outputs" / "golden"  # gitignored
+MAIN_STORY = REPO / "tests" / "fixtures" / "main_story"
+SUBSET_CBML = MAIN_STORY / "subset.cbml"
+FROZEN_PROMPTS = MAIN_STORY / "subset_prompts"
+RUNS = REPO / "tests" / "outputs" / "ab_runs"  # gitignored
 
-# Golden page -> where it comes from in story.cbml and what it covers
+# Subset page -> where it comes from in story.cbml and what it covers
 # (Docs/PLAN.md problem numbers).
-GOLDEN_PAGES = {
+SUBSET_PAGES = {
     1: "story page 3: Gerald + Yuki 4-line exchange (problem 3), four 0.44 "
        "solo panels incl. a Gerald close-up (consistency) and INTERN (no ref)",
     2: "story pages 8-9 (spread): 1.33 panels, 4-character panel_4 with 2 "
@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     reletter(project, config, panels)
     issues = write_sheets(project, out, baseline=baseline)
 
-    pages = GOLDEN_PAGES if story is None else {
+    pages = SUBSET_PAGES if story is None else {
         page: "" for page in sorted({review.panel_sort_key(p)[0] for p in panels})}
     report = _format_report(panels, issues, gen_s, [] if args.force else reused, args, pages)
     (out / "report.txt").write_text(report, encoding="utf-8")
@@ -152,7 +152,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", default="latest",
                     help=f"run name (a folder in {RUNS.relative_to(REPO)}) or a path")
-    ap.add_argument("--force", action="store_true", help="regenerate every golden panel")
+    ap.add_argument("--force", action="store_true", help="regenerate every panel")
     ap.add_argument("--no-generate", action="store_true", help="never start Wan2GP")
     ap.add_argument("--base-resolution", type=int, help="override wan2gp.base_resolution")
     ap.add_argument("--baseline", help="another run's name or path, to compare against")
@@ -165,7 +165,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap.add_argument("--lora", action="append", default=[], metavar="CHARACTER=PATH",
                     help="attach a trained LoRA to a character for this run (repeatable)")
     ap.add_argument("--story", metavar="DIR",
-                    help="run this story fixture instead of the golden subset (see above)")
+                    help="run this story fixture instead of the subset (see above)")
     return ap.parse_args(argv)
 
 
@@ -209,44 +209,29 @@ def _unload_llm(config: dict) -> None:
         requests.post(f"{base}/api/generate", timeout=30,
                       json={"model": cfg_get(config, "llm.model", ""), "keep_alive": 0})
     except Exception as e:  # noqa: BLE001 — best effort
-        print(f"[golden] couldn't unload the LLM ({e}); generation may be slower")
+        print(f"[ab_run] couldn't unload the LLM ({e}); generation may be slower")
 
 
 def _open_project(project_dir: Path, story: Path | None = None) -> lc.Project:
-    """Load the golden project (or ``story``'s), creating it on first run.
+    """Load the subset's project (or ``story``'s), creating it on first run.
 
     The CBML and assets are refreshed from the fixtures every run (asset
     registration is idempotent), so fixture edits are picked up without
     wiping generated panels.
     """
-    cbml = story / "story.cbml" if story else GOLDEN_CBML
+    cbml = story / "story.cbml" if story else SUBSET_CBML
     if (project_dir / "manifest.json").is_file():
         project = lc.load_project(project_dir)
         shutil.copy2(cbml, project.cbml_path)
     else:
         project_dir.parent.mkdir(parents=True, exist_ok=True)
         project = lc.create_project(project_dir.name, cbml, base_dir=project_dir.parent)
-    if story:
-        register_story_assets(project, story)
-        return project
-
-    for name in ["DAVID", "GERALD", "INTERN", "RANJEET", "YUKI"]:
-        png = FIXTURES / f"{name}.png"
-        lc.register_character(project, name,
-                              description=(FIXTURES / f"{name}.txt").read_text().strip(),
-                              reference_images=[png] if png.exists() else [])
-    for name in ["GERALDS_APARTMENT", "THE_BAR", "THE_OFFICE"]:
-        png = FIXTURES / f"{name}.png"
-        lc.register_location(project, name,
-                             description=(FIXTURES / f"{name}.txt").read_text().strip(),
-                             reference_images=[png] if png.exists() else [])
-    lc.register_style(project, prompt_prefix=(FIXTURES / "Style.txt").read_text().strip(),
-                      reference_images=[FIXTURES / "Style.png"])
+    register_story_assets(project, story or MAIN_STORY)
     return project
 
 
 def register_story_assets(project: lc.Project, story: Path) -> None:
-    """Register a ``--story`` folder's characters, locations and style."""
+    """Register a story folder's characters, locations and style."""
     def refs(txt: Path) -> list[Path]:
         png = txt.with_suffix(".png")
         return [png] if png.is_file() else []
@@ -262,7 +247,7 @@ def register_story_assets(project: lc.Project, story: Path) -> None:
 
 
 def _format_report(panels, issues, gen_s, reused, args, pages) -> str:
-    lines = ["golden run: " + time.strftime("%Y-%m-%d %H:%M")]
+    lines = ["A/B run: " + time.strftime("%Y-%m-%d %H:%M")]
     flags = [f"--{k.replace('_', '-')}={item}" for k, v in vars(args).items()
              if v not in (None, False) and k != "out"
              for item in (v if isinstance(v, list) else [v])]

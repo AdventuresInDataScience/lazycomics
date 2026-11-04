@@ -1033,7 +1033,7 @@ def _dark_row_bands(img, rect, dark=100):
 
 @_with_env
 def test_wrapped_lines_do_not_collide(env):
-    # Golden page_4_panel_1: "are more" (no ascenders/descenders) followed by
+    # Subset page_4_panel_1: "are more" (no ascenders/descenders) followed by
     # "of you?" drew on top of each other when lines advanced by their own
     # ink height. Advancing by the font's line height keeps two clear rows.
     orig = text_renderer._wrap_text
@@ -1079,7 +1079,7 @@ def _face(cx, h, W=1000, y=300):
 
 
 def test_match_ignores_background_faces_by_size_and_distance():
-    # Golden page_1_panel_1: six faces for two characters. Rank-matching the
+    # Subset page_1_panel_1: six faces for two characters. Rank-matching the
     # speakers gave Gerald a background face and Yuki Gerald's face.
     faces = [_face(0.07, 40), _face(0.26, 74), _face(0.30, 60),
              _face(0.50, 29), _face(0.67, 72), _face(0.92, 58)]
@@ -1089,7 +1089,7 @@ def test_match_ignores_background_faces_by_size_and_distance():
 
 
 def test_match_counts_silent_characters():
-    # Golden page_2_panel_2: Ranjeet and Yuki speak, Gerald (left) is silent.
+    # Subset page_2_panel_2: Ranjeet and Yuki speak, Gerald (left) is silent.
     # Matching only the speakers handed them the two leftmost faces.
     chars = ["GERALD", "YUKI", "RANJEET"]
     faces = [_face(0.08, 49), _face(0.24, 137), _face(0.60, 103), _face(0.80, 121)]
@@ -1108,7 +1108,7 @@ def test_match_fails_closed_when_ambiguous():
 
 
 def test_match_fewer_faces_leaves_unseen_speaker_unmatched():
-    # Golden page_4_panel_1: four characters, two faces. Gerald isn't in the
+    # Subset page_4_panel_1: four characters, two faces. Gerald isn't in the
     # panel; he must not inherit someone else's face.
     chars = ["GERALD", "YUKI", "RANJEET", "DAVID"]
     got = text_renderer._match_characters_to_faces(

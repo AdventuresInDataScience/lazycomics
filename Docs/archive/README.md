@@ -19,3 +19,8 @@ Code comments of the form `plan §N` or `§14.x` (in `src/lazycomics/*.py` and
 files is the LoRA path, renumbered W12 on 2026-11-03 when W11 became
 Refinement. The design principles and forward contracts were
 carried over into `PLAN.md`.
+
+Test paths and run names in all of these predate the 2026-11-04
+reorganisation of `tests/` (e.g. "golden run" is now "A/B run",
+`tests/e2e/outputs/golden/` is `tests/outputs/ab_runs/`). The mapping is in
+`PLAN.md`, "Where runs live".

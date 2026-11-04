@@ -418,7 +418,7 @@ def test_task_output_filename_is_the_panel_id():
 
 
 def test_task_nag_omitted_by_default():
-    # Default tasks must stay byte-identical so golden runs remain comparable.
+    # Default tasks must stay byte-identical so A/B runs remain comparable.
     cfg = _load_bridge_config(_base_config())
     assert "NAG_scale" not in _build_wangp_task({}, "x", "", [], "1024x1024", cfg)
 

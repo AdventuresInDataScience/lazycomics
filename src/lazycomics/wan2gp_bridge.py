@@ -436,7 +436,7 @@ _DEFAULT_INPAINT_MASK_FEATHER = 0.04
 # Normalized Attention Guidance strength. Klein is guidance-distilled (wgp
 # forces guidance_scale to 1), so NAG is the only way the negative prompt
 # reaches the model, and wgp applies it only when NAG_scale > 1. 1 = off.
-# Off by default: W8's golden A/Bs (1.5-3) traded painted bubbles for
+# Off by default: W8's A/B runs (1.5-3) traded painted bubbles for
 # duplicated characters and style drift (Docs/archive/2026-11-03_PLAN_W7-W8.md).
 _DEFAULT_NAG_SCALE = 1.0
 

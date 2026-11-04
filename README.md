@@ -215,44 +215,50 @@ projects/my_comic/
 ```
 tests/
 ├── test_*.py                 unit tests: fast, no GPU
-└── e2e/                      the real pipeline (Wan2GP, Ollama): needs the GPU
-    ├── test_integration_e2e.py   full story → .cbz, with checks
-    ├── test_wan2gp_live*.py      1- and 2-panel bridge smoke tests
-    ├── fixtures/                 the test comic:
-    │   ├── story.cbml            full story (33 panels), used by the e2e test
-    │   ├── golden.cbml           12-panel subset, used by tools/golden_run.py
-    │   ├── <NAME>.txt / .png     character, location and style descriptions + refs
-    │   ├── golden_prompts/       frozen prompts, so golden runs are comparable
-    │   ├── face_labels.json      hand labels: who is where, for scoring attribution
-    │   └── holdout_story/        a second, 7-panel script with its own cast, setting
-    │                             and style, for checking changes beyond story.cbml
-    ├── outputs/                  gitignored; each run replaces its own folder
-    │   ├── e2e/                  test_integration_e2e.py's project
-    │   ├── golden/<name>/        tools/golden_run.py --out <name>
-    │   ├── holdout/, synthetic/  tools/lettering_bench.py's re-lettered sets
-    │   ├── refiner_bench/        tools/refiner_bench.py's scripts and prompts
-    │   └── live/, live_queue/    the smoke tests
-    └── archived_test_outputs/    gitignored; old runs kept on purpose, date-prefixed
-tools/                        golden_run.py, contact_sheet.py, lettering_bench.py,
+├── e2e/                      the end-to-end test only: full story → .cbz, with checks
+├── smoke/                    one_panel.py, two_panels.py: real Wan2GP, minutes
+├── fixtures/                 inputs (tracked)
+│   ├── main_story/           the test comic
+│   │   ├── story.cbml        full story (33 panels): the e2e test
+│   │   ├── subset.cbml       12 panels cut from it: tools/ab_run.py
+│   │   ├── subset_prompts/   frozen prompts for the subset, so A/B runs are comparable
+│   │   ├── characters/, locations/   <ID>.txt description + optional <ID>.png ref
+│   │   └── Style.txt / .png
+│   ├── holdout_story/        a second, 7-panel script laid out the same way, with its
+│   │                         own cast, setting and style: checks changes beyond main_story
+│   └── face_labels.json      hand labels: who is where, for scoring attribution
+├── outputs/                  gitignored; one folder per test or tool, each run replaces its own
+│   ├── e2e/                  the e2e test's project
+│   ├── smoke/                one_panel/, two_panels/
+│   ├── ab_runs/<name>/       tools/ab_run.py --out <name>
+│   ├── lettering_bench/      holdout/, synthetic/: its re-lettered copies
+│   ├── refiner_bench/        its scripts and prompts
+│   └── reviews/<name>/       one-off comparison sheets for review
+└── archive/                  gitignored; runs kept on purpose, same layout as outputs/
+    ├── e2e/<date>[_label]/
+    └── ab_runs/<date>_<name>/
+tools/                        ab_run.py, contact_sheet.py, lettering_bench.py,
                               refiner_bench.py, train_lora.py, profile_architectures.py,
                               export_upscaler_onnx.py
 ```
 
 ```bash
-pytest tests --ignore=tests/e2e                     # unit tests, ~1 min
-python tests/e2e/test_wan2gp_live_queue.py          # bridge smoke test, minutes
-python tools/golden_run.py --force --out NAME --baseline w8_frozen    # golden subset, ~10 min
-python tools/golden_run.py --story tests/e2e/fixtures/holdout_story --refine --force --out NAME
+pytest tests --ignore=tests/e2e                     # unit tests, ~20s
+python tests/smoke/two_panels.py                    # Wan2GP bridge smoke test, minutes
+python tools/ab_run.py --force --out NAME --baseline w8_frozen    # A/B run of the subset, ~10 min
+python tools/ab_run.py --story tests/fixtures/holdout_story --refine --force --out NAME
                                                     # the held-out script, ~8 min
 python tools/refiner_bench.py                       # refiner rules on synthetic + held-out scripts, LLM only, ~9 min
 pytest tests/e2e/test_integration_e2e.py -v -s      # full e2e, 30+ min
-python tools/contact_sheet.py tests/e2e/outputs/e2e [--reletter]   # sheets + checks for any project
+python tools/contact_sheet.py tests/outputs/e2e [--reletter]   # sheets + checks for any project
 python tools/lettering_bench.py                     # lettering checks on tuning, held-out + synthetic panels, ~2.5 min
 python tools/train_lora.py dataset|train PROJECT_DIR CHARACTER   # LoRA training set, then LoRA
 ```
 
-To keep a run, move its folder into `tests/e2e/archived_test_outputs/`
-(date-prefixed) before re-running. Which check to run for which change:
+To keep a run, move it from `tests/outputs/<kind>/` to
+`tests/archive/<kind>/`, date-prefixed, before re-running; then rewrite the
+old folder path in its `enriched/*.json` (projects store absolute asset
+paths). Which check to run for which change:
 [`Docs/PLAN.md`](Docs/PLAN.md), "Verifying a change".
 
 ## License

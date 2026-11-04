@@ -1,4 +1,4 @@
-"""Golden-subset review: machine checks + contact sheets (dev utility).
+"""Run review: machine checks + contact sheets (dev utility).
 
 Reads what the pipeline already wrote — ``panels/``, ``panels_text/``,
 ``enriched/``, ``pages/``, the renderer's ``panels_text/<id>.layout.json``
@@ -13,7 +13,7 @@ issues per panel and (b) two contact-sheet PNGs for eyeballing:
 * **dataset sheet** — a grid of named thumbnails, for hand-picking a LoRA
   training set.
 
-``tools/golden_run.py``, ``tools/contact_sheet.py`` and
+``tools/ab_run.py``, ``tools/contact_sheet.py`` and
 ``tools/train_lora.py`` drive it; nothing here touches a GPU.
 
 Checks (``check_panel``), by ``Issue.kind``:
